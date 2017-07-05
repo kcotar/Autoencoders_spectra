@@ -1,0 +1,23 @@
+# PyCharm folder
+.idea
+
+# Comipled code
+*.pyc
+
+# Datasets
+*.csv
+*.fits
+*.vot
+*.dat
+*.txt
+*.h5
+*.hdf5
+*.json
+
+# Images
+*.jpg
+*.png
+
+
+# Allowed files and or folder
+!periodic_table.csv
