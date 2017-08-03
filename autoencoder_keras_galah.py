@@ -1,4 +1,5 @@
 import imp, os
+from keras.layers import Input, Dense, Conv2D, MaxPooling2D, UpSampling2D
 from keras.layers import Input, Dense
 from keras.models import Model, Sequential, load_model
 from keras.layers.advanced_activations import LeakyReLU
