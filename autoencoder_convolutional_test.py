@@ -1,4 +1,4 @@
-import os
+import imp, os
 
 from keras.layers import Input, Dense, Conv1D, MaxPooling1D, UpSampling1D
 from keras.models import Model
@@ -10,12 +10,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+imp.load_source('helper', '../tSNE_test/helper_functions.py')
+from helper import move_to_dir
+
 # input data
 galah_data_input = '/home/klemen/GALAH_data/'
 spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.csv',
-                     'galah_dr52_ccd3_5640_5880_wvlstep_0.05_lin_RF.csv',
+                     'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF.csv',
                      'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF.csv',
-                     'galah_dr52_ccd3_7700_7895_wvlstep_0.07_lin_RF.csv']
+                     'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_RF.csv']
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -27,11 +30,11 @@ output_results = True
 output_plots = True
 
 # reading settings
-spectra_get_cols = [4000, 4000, 4000, 2000]
+spectra_get_cols = [4000, 4000, 4000, 2016]
 
 # AE NN band dependant settings
 n_dense_first = [500, 500, 500, 250]  # number of nodes in first and third fully connected layer of AE
-n_dense_middle = [40, 40, 40, 40, 20]  # number of nodes in the middle fully connected layer of AE
+n_dense_middle = [25, 25, 25, 25]  # number of nodes in the middle fully connected layer of AE
 
 # configuration of CAE network is the same for every spectral band:
 # convolution layer 1
@@ -51,7 +54,7 @@ P_s_3 = 2
 # ---------------- MAIN PROGRAM --------------------------
 # --------------------------------------------------------
 
-for i_band in range(4):
+for i_band in [0,1,2,3]:
 
     spectra_file = spectra_file_list[i_band]
     # data availability check
@@ -59,6 +62,7 @@ for i_band in range(4):
         print 'Spectral file not found: '+spectra_file
         continue
 
+    print 'Working on '+spectra_file
     # determine cols to be read from csv file
     spectra_file_split = spectra_file.split('_')
     wlv_begin = float(spectra_file_split[3])
@@ -73,7 +77,7 @@ for i_band in range(4):
     # --------------------------------------------------------
     # ---------------- Data reading and handling -------------
     # --------------------------------------------------------
-    print 'Reading spectral data from {:04.2f} to {:04.2f}'.format(wvl_range[col_start], wvl_range[col_end])
+    print 'Reading spectral data from {:07.2f} to {:07.2f}'.format(wvl_range[col_start], wvl_range[col_end])
     spectral_data = pd.read_csv(galah_data_input + spectra_file, sep=',', header=None, na_values='nan',
                                 usecols=range(col_start, col_end)).values
 
@@ -84,11 +88,16 @@ for i_band in range(4):
         print 'Correcting '+str(n_bad_spectra)+' bad flux values in read spectra.'
         spectral_data[idx_bad_spectra] = 1.  # remove nan values with theoretical continuum flux value
 
+    # create suffix for both network parts
+    cae_suffix = '_CAE_'+str(C_f_1)+'_'+str(C_k_1)+'_'+str(P_s_1)+\
+                 '_'+str(C_f_2)+'_'+str(C_k_2)+'_'+str(P_s_2)+\
+                 '_'+str(C_f_3)+'_'+str(C_k_3)+'_'+str(P_s_3)
+    ae_suffix = '_AE_'+str(n_dense_first[i_band])+'_'+str(n_dense_middle[i_band])
     # output data names
-    normalizer_file = spectra_file[:-4] + '_normalizer.pkl'
-    convolution_file = spectra_file[:-4] + '_cae.h5'  # CAE - Convolutional autoencoder
-    autoencoder_file = spectra_file[:-4] + '_ae.h5'  # AE - Autoencoder
-    encoded_output_file = spectra_file[:-4] + '_encoded.csv'  # AE - Autoencoder
+    normalizer_file = spectra_file[:-4] + '_' + str(spectra_get_cols[i_band]) + '_normalizer.pkl'
+    convolution_file = spectra_file[:-4] + cae_suffix + '_cae.h5'  # CAE - Convolutional autoencoder
+    autoencoder_file = spectra_file[:-4] + ae_suffix + '_ae.h5'  # AE - Autoencoder
+    encoded_output_file = spectra_file[:-4] + cae_suffix + ae_suffix + '_encoded.csv'  # AE - Autoencoder
 
     # normalize data (flux at every wavelength)
     if os.path.isfile(normalizer_file):
@@ -150,7 +159,7 @@ for i_band in range(4):
         convolutional_nn.load_weights(convolution_file)
     else:
         convolutional_nn.fit(X_in, X_in,
-                             epochs=125,
+                             epochs=50,
                              batch_size=256,
                              shuffle=True,
                              validation_split=0.1)
@@ -197,7 +206,7 @@ for i_band in range(4):
         autoencoder_nn.load_weights(autoencoder_file)
     else:
         autoencoder_nn.fit(X_in_2, X_in_2,
-                           epochs=250,
+                           epochs=125,
                            batch_size=256,
                            shuffle=True,
                            validation_split=0.1)
@@ -214,7 +223,7 @@ for i_band in range(4):
     # ---------------- Check results - data deconvolution ----
     # --------------------------------------------------------
 
-    # create deconvolution part from the convolutional_nn network
+    # re-create deconvolution part from the convolutional_nn network
     input_decoder_cae = Input(shape=(X_out_encoded_shape[1], X_out_encoded_shape[2]))
     decoder_cae = input_decoder_cae
     for cae_layer in convolutional_nn.layers[10:]:
@@ -226,6 +235,7 @@ for i_band in range(4):
     X_out_2 = np.reshape(X_out_2, X_out_encoded_shape)
     X_out_cae_2 = convolutional_decoder.predict(X_out_2)
 
+    # output of the final results for this NN spectral analysis
     if output_results:
         print 'Saving reduced and encoded spectra'
         np.savetxt(encoded_output_file, X_out_encoded_2, delimiter=',')  #, fmt='%f')
@@ -239,19 +249,33 @@ for i_band in range(4):
     # --------------------------------------------------------
 
     if output_plots:
-        print 'Plotting resulting spectra'
-        n_random_plots = 50
+        out_plot_dir = spectra_file[:-4] + cae_suffix + ae_suffix
+        move_to_dir(out_plot_dir)
+        print 'Plotting results for random spectra'
+        n_random_plots = 75
         id_plots = np.int32(np.random.rand(n_random_plots)*processed_data.shape[0])
         for i in id_plots:
             plt.plot(spectral_data[i], color='black', lw=0.75)
             plt.plot(processed_data[i], color='red', lw=0.75)
             plt.plot(processed_data_2[i], color='blue', lw=0.75)
             plt.ylim((0.4, 1.2))
-            plt.savefig(str(i)+'.png', dpi=750)
+            plt.savefig(spectra_file[:-4] + '_' + str(i) + '.png', dpi=750)
             plt.close()
+        os.chdir('..')
 
     # --------------------------------------------------------
-    # ---------------- Analyse decoded values and their distribution
+    # ---------------- Clean the data ------------------------
+    # --------------------------------------------------------
+    X_out = None
+    X_out_encoded = None
+    X_out_2 = None
+    X_out_encoded_2 = None
+    spectral_data = None
+    processed_data = None
+    processed_data_2 = None
+
+    # --------------------------------------------------------
+    # ---------------- Analyse decoded values and their distributions
     # --------------------------------------------------------
     # TODO
 

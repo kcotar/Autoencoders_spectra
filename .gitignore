@@ -14,6 +14,10 @@
 *.hdf5
 *.json
 
+# Dump or log data
+*.pkl
+*.out
+
 # Images
 *.jpg
 *.png
