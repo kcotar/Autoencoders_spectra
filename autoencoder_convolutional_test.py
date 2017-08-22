@@ -34,7 +34,7 @@ spectra_get_cols = [4000, 4000, 4000, 2016]
 
 # AE NN band dependant settings
 n_dense_first = [500, 500, 500, 250]  # number of nodes in first and third fully connected layer of AE
-n_dense_middle = [25, 25, 25, 25]  # number of nodes in the middle fully connected layer of AE
+n_dense_middle = [40, 40, 40, 40]  # number of nodes in the middle fully connected layer of AE
 
 # configuration of CAE network is the same for every spectral band:
 # convolution layer 1
