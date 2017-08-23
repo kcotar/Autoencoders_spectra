@@ -15,6 +15,7 @@ from tsne import *
 
 # settings
 normalize_data = True
+remove_flagged = True
 perp = 50
 theta = 0.3
 seed = 35
@@ -34,13 +35,23 @@ reduced_spectra_files = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF_CAE_16_5
 
 # save results in csv format
 csv_out_filename = 'tsne_results_perp'+str(perp)+'_theta'+str(theta)+'_CAE_16_5_4_16_5_4_8_3_2_AE_500_'+str(n_middle)+suffix_out
+if remove_flagged:
+    csv_out_filename += '_redflagok'
 if normalize_data:
     csv_out_filename += '_norm'
 csv_out_filename += '.csv'
 
 # read objects parameters
 galah_param = Table.read(galah_data_input + galah_param_file)
-tsne_class_old = Table.read(galah_data_input + galah_tsne_1_0)
+tsne_class_old = Table.read(galah_data_input + galah_tsne_1_0)3
+
+if remove_flagged:
+    idx_ok_lines = galah_param['red_flag'] == 0
+    galah_param = galah_param[idx_ok_lines]
+    csv_spectra_skip_rows = np.where(np.logical_not(idx_ok_lines))[0]
+    print 'Objects removing flagged data: '+str(np.sum(idx_ok_lines))
+else:
+    csv_spectra_skip_rows = None
 
 if os.path.isfile(csv_out_filename):
     print 'Reading precomputed tSNE results'
@@ -50,7 +61,8 @@ else:
     reduced_data = list([])
     for csv_file in np.array(reduced_spectra_files)[use_bands]:
         print 'Reading reduced spectra file: ' + csv_file
-        reduced_data.append(pd.read_csv(csv_file, sep=',', header=None, na_values='nan').values)
+        reduced_data.append(pd.read_csv(csv_file, sep=',', header=None,
+                                        na_values='nan', skiprows=csv_spectra_skip_rows).values)
 
     # merge spectral data sets
     reduced_data = np.hstack(reduced_data)

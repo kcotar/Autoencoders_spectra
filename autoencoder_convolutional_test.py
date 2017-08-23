@@ -5,6 +5,7 @@ from keras.models import Model
 from keras.layers.advanced_activations import PReLU
 from sklearn.preprocessing import StandardScaler
 from sklearn.externals import joblib
+from keras.callbacks import EarlyStopping
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,7 +34,7 @@ output_plots = True
 spectra_get_cols = [4000, 4000, 4000, 2016]
 
 # AE NN band dependant settings
-n_dense_first = [500, 500, 500, 250]  # number of nodes in first and third fully connected layer of AE
+n_dense_first = [500, 500, 500, 300]  # number of nodes in first and third fully connected layer of AE
 n_dense_middle = [40, 40, 40, 40]  # number of nodes in the middle fully connected layer of AE
 
 # configuration of CAE network is the same for every spectral band:
@@ -54,7 +55,7 @@ P_s_3 = 2
 # ---------------- MAIN PROGRAM --------------------------
 # --------------------------------------------------------
 
-for i_band in [0,1,2,3]:
+for i_band in [0,1,2]:
 
     spectra_file = spectra_file_list[i_band]
     # data availability check
@@ -147,7 +148,7 @@ for i_band in [0,1,2,3]:
 
     # create a model for complete network
     convolutional_nn = Model(input_cae, decoded_cae)
-    convolutional_nn.compile(optimizer='adadelta', loss='mse')
+    convolutional_nn.compile(optimizer='adadelta', loss='mse', metrics=['accuracy'])
     convolutional_nn.summary()
 
     # create a model for the encoder part of the network
@@ -158,11 +159,18 @@ for i_band in [0,1,2,3]:
         print 'Reading NN weighs - CAE'
         convolutional_nn.load_weights(convolution_file)
     else:
+        # define early stopping callback
+        earlystop = EarlyStopping(monitor='val_loss', patience=2, verbose=1, mode='auto')
+        # fit the NN model
         convolutional_nn.fit(X_in, X_in,
-                             epochs=50,
+                             epochs=60,
                              batch_size=256,
                              shuffle=True,
-                             validation_split=0.1)
+                             callbacks=[earlystop],
+                             # TODO: this selects the last part of the data (eq latest observations) for validation
+                             # TODO: it should be corrected in future to improve the validation step
+                             validation_split=0.15,
+                             verbose=2)
         if save_models:
             print 'Saving NN weighs - CAE'
             convolutional_nn.save_weights(convolution_file)
@@ -194,7 +202,7 @@ for i_band in [0,1,2,3]:
     decoded_ae = PReLU()(x)
 
     autoencoder_nn = Model(input_ae, decoded_ae)
-    autoencoder_nn.compile(optimizer='adadelta', loss='mse')
+    autoencoder_nn.compile(optimizer='adadelta', loss='mse', metrics=['accuracy'])
     autoencoder_nn.summary()
 
     # create a model for the encoder part of the network
@@ -205,11 +213,16 @@ for i_band in [0,1,2,3]:
         print 'Reading NN weighs- AE'
         autoencoder_nn.load_weights(autoencoder_file)
     else:
+        # define early stopping callback
+        earlystop = EarlyStopping(monitor='val_loss', patience=3, verbose=1, mode='auto')
+        # fit the NN model
         autoencoder_nn.fit(X_in_2, X_in_2,
                            epochs=125,
                            batch_size=256,
                            shuffle=True,
-                           validation_split=0.1)
+                           callbacks=[earlystop],
+                           validation_split=0.15,
+                           verbose=2)
         if save_models:
             print 'Saving NN weighs - AE'
             autoencoder_nn.save_weights(autoencoder_file)
