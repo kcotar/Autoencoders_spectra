@@ -15,26 +15,28 @@ from tsne import *
 
 # settings
 normalize_data = True
-remove_flagged = True
-perp = 50
+remove_flagged = False
+snr_cut = True
+perp = 30
 theta = 0.3
-seed = 35
-n_middle = 40
-use_bands = [0, 1, 2]
-suffix_out = '_noccd4'
+seed = 1337
+n_middle = 50
+use_bands = [2]
+cae_string = 'CAE_16_5_4_16_5_4_32_3_2'
+suffix_out = '_ccd3only_manh'
 
 # input data
 galah_data_input = '/home/klemen/GALAH_data/'
 galah_param_file = 'sobject_iraf_52_reduced.fits'
 galah_tsne_1_0 = 'tsne_class_1_0.csv'
 
-reduced_spectra_files = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF_CAE_16_5_4_16_5_4_8_3_2_AE_500_'+str(n_middle)+'_encoded.csv',
-                         'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF_CAE_16_5_4_16_5_4_8_3_2_AE_500_'+str(n_middle)+'_encoded.csv',
-                         'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF_CAE_16_5_4_16_5_4_8_3_2_AE_500_'+str(n_middle)+'_encoded.csv',
-                         'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_RF_CAE_16_5_4_16_5_4_8_3_2_AE_250_'+str(n_middle)+'_encoded.csv']
+reduced_spectra_files = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF_'+cae_string+'_AE_1000_'+str(n_middle)+'_encoded.csv',
+                         'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF_'+cae_string+'_AE_1000_'+str(n_middle)+'_encoded.csv',
+                         'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF_'+cae_string+'_AE_1000_'+str(n_middle)+'_encoded.csv',
+                         'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_RF_'+cae_string+'_AE_600_'+str(n_middle)+'_encoded.csv']
 
 # save results in csv format
-csv_out_filename = 'tsne_results_perp'+str(perp)+'_theta'+str(theta)+'_CAE_16_5_4_16_5_4_8_3_2_AE_500_'+str(n_middle)+suffix_out
+csv_out_filename = 'tsne_results_perp'+str(perp)+'_theta'+str(theta)+'_'+cae_string+'_AE_1000_'+str(n_middle)+suffix_out
 if remove_flagged:
     csv_out_filename += '_redflagok'
 if normalize_data:
@@ -43,13 +45,22 @@ csv_out_filename += '.csv'
 
 # read objects parameters
 galah_param = Table.read(galah_data_input + galah_param_file)
-tsne_class_old = Table.read(galah_data_input + galah_tsne_1_0)3
+tsne_class_old = Table.read(galah_data_input + galah_tsne_1_0)
 
-if remove_flagged:
+# snr limit
+if snr_cut and not remove_flagged:
+    snr_percentile = 10.
+    snr_col = 'snr_c3_guess'  # as ccd numbering starts with 1
+    print 'Cutting off {:.1f}% of spectra with low snr value ('.format(snr_percentile) + snr_col + ').'
+    snr_percentile_value = np.percentile(galah_param[snr_col], snr_percentile)
+    idx_use = galah_param[snr_col] >= snr_percentile_value
+    galah_param = galah_param[idx_use]
+
+if remove_flagged and not snr_cut:
     idx_ok_lines = galah_param['red_flag'] == 0
     galah_param = galah_param[idx_ok_lines]
     csv_spectra_skip_rows = np.where(np.logical_not(idx_ok_lines))[0]
-    print 'Objects removing flagged data: '+str(np.sum(idx_ok_lines))
+    print 'Objects after removing flagged data: '+str(np.sum(idx_ok_lines))
 else:
     csv_spectra_skip_rows = None
 
@@ -76,7 +87,7 @@ else:
 
     # run tSNE
     tsne_result = bh_tsne(reduced_data, no_dims=2, perplexity=perp, theta=theta, randseed=seed, verbose=True,
-                          distance='euclidean', path='/home/klemen/tSNE_test/')
+                          distance='manhattan', path='/home/klemen/tSNE_test/')
     tsne_ax1, tsne_ax2 = tsne_results_to_columns(tsne_result)
 
     tsne_data = galah_param['sobject_id', 'galah_id']
@@ -93,18 +104,19 @@ plot_tsne_results(tsne_data['tsne_axis_1'], tsne_data['tsne_axis_2'],
                   suffix='', prefix='', ps=0.2)
 
 # print np.unique(galah_param['red_flag'], return_counts=True)
-idx_flagged = galah_param['red_flag'] > 0
-plot_tsne_results(tsne_data['tsne_axis_1'][idx_flagged], tsne_data['tsne_axis_2'][idx_flagged],
-                  galah_param[idx_flagged], ['red_flag'],
-                  suffix='_all', prefix='', ps=0.2)
-idx_flagged = np.logical_and(galah_param['red_flag'] > 0, galah_param['red_flag'] < 16)
-plot_tsne_results(tsne_data['tsne_axis_1'][idx_flagged], tsne_data['tsne_axis_2'][idx_flagged],
-                  galah_param[idx_flagged], ['red_flag'],
-                  suffix='_badwvl', prefix='', ps=0.2)
-idx_flagged = np.logical_and(galah_param['red_flag'] >= 16, galah_param['red_flag'] < 64)
-plot_tsne_results(tsne_data['tsne_axis_1'][idx_flagged], tsne_data['tsne_axis_2'][idx_flagged],
-                  galah_param[idx_flagged], ['red_flag'],
-                  suffix='_molecfit', prefix='', ps=0.2)
+if not remove_flagged:
+    idx_flagged = galah_param['red_flag'] > 0
+    plot_tsne_results(tsne_data['tsne_axis_1'][idx_flagged], tsne_data['tsne_axis_2'][idx_flagged],
+                      galah_param[idx_flagged], ['red_flag'],
+                      suffix='_all', prefix='', ps=0.2)
+    idx_flagged = np.logical_and(galah_param['red_flag'] > 0, galah_param['red_flag'] < 16)
+    plot_tsne_results(tsne_data['tsne_axis_1'][idx_flagged], tsne_data['tsne_axis_2'][idx_flagged],
+                      galah_param[idx_flagged], ['red_flag'],
+                      suffix='_badwvl', prefix='', ps=0.2)
+    idx_flagged = np.logical_and(galah_param['red_flag'] >= 16, galah_param['red_flag'] < 64)
+    plot_tsne_results(tsne_data['tsne_axis_1'][idx_flagged], tsne_data['tsne_axis_2'][idx_flagged],
+                      galah_param[idx_flagged], ['red_flag'],
+                      suffix='_molecfit', prefix='', ps=0.2)
 
 idx_tsne_old = np.in1d(galah_param['sobject_id'], tsne_class_old['sobject_id'])
 plot_star_cluster(tsne_data['tsne_axis_1'], tsne_data['tsne_axis_2'],

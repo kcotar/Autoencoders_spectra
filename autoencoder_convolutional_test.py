@@ -1,21 +1,32 @@
 import imp, os
 
-from keras.layers import Input, Dense, Conv1D, MaxPooling1D, UpSampling1D
+from keras.layers import Input, Dense, Conv1D, MaxPooling1D, UpSampling1D, Dropout
 from keras.models import Model
 from keras.layers.advanced_activations import PReLU
 from sklearn.preprocessing import StandardScaler
 from sklearn.externals import joblib
 from keras.callbacks import EarlyStopping
+from astropy.table import Table
+from socket import gethostname
 
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-imp.load_source('helper', '../tSNE_test/helper_functions.py')
-from helper import move_to_dir
+# PC hostname
+pc_name = gethostname()
 
 # input data
-galah_data_input = '/home/klemen/GALAH_data/'
+if pc_name == 'gigli' or 'klemen-P5K-E':
+    galah_data_input = '/home/klemen/GALAH_data/'
+    imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
+else:
+    galah_data_input = '/data4/cotar/'
+from helper_functions import move_to_dir
+
+galah_param_file = 'sobject_iraf_52_reduced.fits'
 spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.csv',
                      'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF.csv',
                      'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF.csv',
@@ -29,13 +40,15 @@ spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.csv',
 save_models = True
 output_results = True
 output_plots = True
+limited_rows = False
+snr_cut = True
 
 # reading settings
 spectra_get_cols = [4000, 4000, 4000, 2016]
 
 # AE NN band dependant settings
 n_dense_first = [500, 500, 500, 300]  # number of nodes in first and third fully connected layer of AE
-n_dense_middle = [40, 40, 40, 40]  # number of nodes in the middle fully connected layer of AE
+n_dense_middle = [50, 50, 50, 50]  # number of nodes in the middle fully connected layer of AE
 
 # configuration of CAE network is the same for every spectral band:
 # convolution layer 1
@@ -55,7 +68,9 @@ P_s_3 = 2
 # ---------------- MAIN PROGRAM --------------------------
 # --------------------------------------------------------
 
-for i_band in [0,1,2]:
+galah_param = Table.read(galah_data_input + galah_param_file)
+
+for i_band in [1]:
 
     spectra_file = spectra_file_list[i_band]
     # data availability check
@@ -75,12 +90,28 @@ for i_band in [0,1,2]:
     col_start = int(n_wvl/2. - spectra_get_cols[i_band]/2.)
     col_end = int(col_start + spectra_get_cols[i_band])
 
+    suffix = ''
+    if snr_cut and not limited_rows:
+        snr_percentile = 5.
+        snr_col = 'snr_c'+str(i_band+1)+'_guess'  # as ccd numbering starts with 1
+        print 'Cutting off {:.1f}% of spectra with low snr value ('.format(snr_percentile)+snr_col+').'
+        snr_percentile_value = np.percentile(galah_param[snr_col], snr_percentile)
+        skip_rows = np.where(galah_param[snr_col] < snr_percentile_value)[0]
+        suffix += '_snrcut'
+    elif limited_rows:
+        n_first_lines = 15000
+        print 'Only limited number ('+str(n_first_lines)+') of spectra rows will be read'
+        skip_rows = np.arange(n_first_lines, len(galah_param))
+        suffix += '_subset'
+    else:
+        skip_rows = None
+
     # --------------------------------------------------------
     # ---------------- Data reading and handling -------------
     # --------------------------------------------------------
     print 'Reading spectral data from {:07.2f} to {:07.2f}'.format(wvl_range[col_start], wvl_range[col_end])
-    spectral_data = pd.read_csv(galah_data_input + spectra_file, sep=',', header=None, na_values='nan',
-                                usecols=range(col_start, col_end)).values
+    spectral_data = pd.read_csv(galah_data_input + spectra_file, sep=',', header=None, na_values='nan', dtype=np.float32,
+                                usecols=range(col_start, col_end), skiprows=skip_rows).values
 
     # possible nan data handling
     idx_bad_spectra = np.where(np.logical_not(np.isfinite(spectral_data)))
@@ -95,10 +126,13 @@ for i_band in [0,1,2]:
                  '_'+str(C_f_3)+'_'+str(C_k_3)+'_'+str(P_s_3)
     ae_suffix = '_AE_'+str(n_dense_first[i_band])+'_'+str(n_dense_middle[i_band])
     # output data names
-    normalizer_file = spectra_file[:-4] + '_' + str(spectra_get_cols[i_band]) + '_normalizer.pkl'
-    convolution_file = spectra_file[:-4] + cae_suffix + '_cae.h5'  # CAE - Convolutional autoencoder
-    autoencoder_file = spectra_file[:-4] + ae_suffix + '_ae.h5'  # AE - Autoencoder
-    encoded_output_file = spectra_file[:-4] + cae_suffix + ae_suffix + '_encoded.csv'  # AE - Autoencoder
+    normalizer_file = spectra_file[:-4] + '_' + str(spectra_get_cols[i_band]) + suffix + '_normalizer.pkl'
+    convolution_file = spectra_file[:-4] + cae_suffix + suffix + '_cae.h5'  # CAE - Convolutional autoencoder
+    autoencoder_file = spectra_file[:-4] + cae_suffix + ae_suffix + suffix + '_ae.h5'  # AE - Autoencoder
+    encoded_output_file = spectra_file[:-4] + cae_suffix + ae_suffix + suffix + '_encoded.csv'  # AE - Autoencoder
+
+    print 'CAE: ' + cae_suffix
+    print 'AE:  ' + ae_suffix
 
     # normalize data (flux at every wavelength)
     if os.path.isfile(normalizer_file):
@@ -118,6 +152,7 @@ for i_band in [0,1,2]:
 
     # add additional dimension that is needed by Keras Input layer
     X_in = np.expand_dims(spectral_data_norm, axis=2)
+    spectral_data_norm = None
 
     # create Keras Input
     input_cae = Input(shape=(X_in.shape[1], 1))
@@ -157,13 +192,13 @@ for i_band in [0,1,2]:
     # model file handling
     if os.path.isfile(convolution_file):
         print 'Reading NN weighs - CAE'
-        convolutional_nn.load_weights(convolution_file)
+        convolutional_nn.load_weights(convolution_file, by_name=True)
     else:
         # define early stopping callback
-        earlystop = EarlyStopping(monitor='val_loss', patience=2, verbose=1, mode='auto')
+        earlystop = EarlyStopping(monitor='val_loss', patience=3, verbose=1, mode='auto')
         # fit the NN model
         convolutional_nn.fit(X_in, X_in,
-                             epochs=60,
+                             epochs=75,
                              batch_size=256,
                              shuffle=True,
                              callbacks=[earlystop],
@@ -173,16 +208,18 @@ for i_band in [0,1,2]:
                              verbose=2)
         if save_models:
             print 'Saving NN weighs - CAE'
-            convolutional_nn.save_weights(convolution_file)
+            convolutional_nn.save_weights(convolution_file, overwrite=True)
 
     print 'Predicting encoded and decoded layers - CAE'
     X_out_cae = convolutional_nn.predict(X_in)
     X_out_encoded = convolutional_encoder.predict(X_in)
     X_out_encoded_shape = X_out_encoded.shape
+    X_in = None
 
     # prepare data for the second processing step
     aa_vector_length = X_out_encoded_shape[1]*X_out_encoded_shape[2]
     X_in_2 = X_out_encoded.reshape((X_out_encoded_shape[0], aa_vector_length))
+    X_out_encoded = None
 
     # --------------------------------------------------------
     # ---------------- Middle fully connected autoencoder ----
@@ -194,10 +231,13 @@ for i_band in [0,1,2]:
     # fully connected layer in between the encoder and decoder part of the CAE
     x = Dense(n_dense_first[i_band], activation=None)(input_ae)
     x = PReLU()(x)
+    x = Dropout(0.2)(x)
     x = Dense(n_dense_middle[i_band], activation=None)(x)
     encoded_ae = PReLU()(x)
-    x = Dense(n_dense_first[i_band], activation=None)(encoded_ae)
+    x = Dropout(0.2)(encoded_ae)
+    x = Dense(n_dense_first[i_band], activation=None)(x)
     x = PReLU()(x)
+    x = Dropout(0.2)(x)
     x = Dense(aa_vector_length, activation=None)(x)
     decoded_ae = PReLU()(x)
 
@@ -211,26 +251,27 @@ for i_band in [0,1,2]:
     # model file handling
     if os.path.isfile(autoencoder_file):
         print 'Reading NN weighs- AE'
-        autoencoder_nn.load_weights(autoencoder_file)
+        autoencoder_nn.load_weights(autoencoder_file, by_name=True)
     else:
         # define early stopping callback
-        earlystop = EarlyStopping(monitor='val_loss', patience=3, verbose=1, mode='auto')
+        earlystop = EarlyStopping(monitor='val_loss', patience=4, verbose=1, mode='auto')
         # fit the NN model
         autoencoder_nn.fit(X_in_2, X_in_2,
-                           epochs=125,
+                           epochs=150,
                            batch_size=256,
                            shuffle=True,
                            callbacks=[earlystop],
-                           validation_split=0.15,
+                           validation_split=0.15,  # TODO: same as for CAE part of the network
                            verbose=2)
         if save_models:
             print 'Saving NN weighs - AE'
-            autoencoder_nn.save_weights(autoencoder_file)
+            autoencoder_nn.save_weights(autoencoder_file, overwrite=True)
 
     print 'Predicting encoded and decoded layers - AE'
     X_out_2 = autoencoder_nn.predict(X_in_2)
     X_out_encoded_2 = autoencoder_encoder.predict(X_in_2)  # IMPORTANT: final output of our NN spectral reduction
     X_out_encoded_2_shape = X_out_encoded_2.shape
+    X_in_2 = None
 
     # --------------------------------------------------------
     # ---------------- Check results - data deconvolution ----
@@ -247,6 +288,7 @@ for i_band in [0,1,2]:
     # in fully connected AE layers
     X_out_2 = np.reshape(X_out_2, X_out_encoded_shape)
     X_out_cae_2 = convolutional_decoder.predict(X_out_2)
+    X_out_2 = None
 
     # output of the final results for this NN spectral analysis
     if output_results:
@@ -262,10 +304,10 @@ for i_band in [0,1,2]:
     # --------------------------------------------------------
 
     if output_plots:
-        out_plot_dir = spectra_file[:-4] + cae_suffix + ae_suffix
+        out_plot_dir = spectra_file[:-4] + cae_suffix + ae_suffix + suffix
         move_to_dir(out_plot_dir)
         print 'Plotting results for random spectra'
-        n_random_plots = 75
+        n_random_plots = 80
         id_plots = np.int32(np.random.rand(n_random_plots)*processed_data.shape[0])
         for i in id_plots:
             plt.plot(spectral_data[i], color='black', lw=0.75)
@@ -279,9 +321,6 @@ for i_band in [0,1,2]:
     # --------------------------------------------------------
     # ---------------- Clean the data ------------------------
     # --------------------------------------------------------
-    X_out = None
-    X_out_encoded = None
-    X_out_2 = None
     X_out_encoded_2 = None
     spectral_data = None
     processed_data = None
