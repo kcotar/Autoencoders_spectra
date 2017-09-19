@@ -18,7 +18,7 @@ import pandas as pd
 pc_name = gethostname()
 
 # input data
-if pc_name == 'gigli' or 'klemen-P5K-E':
+if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
     galah_data_input = '/home/klemen/GALAH_data/'
     imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
 else:
@@ -46,7 +46,8 @@ limited_rows = False
 snr_cut = False
 normalize_spectra = True
 dropout_learning = True
-n_dense_nodes = [3000, 2000, 800, 300, 1]
+activation_function = None
+n_dense_nodes = [3000, 1800, 750, 25, 4]
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -124,10 +125,14 @@ for sme_abundance in sme_abundances_list:
     param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
                         abund_param['sobject_id', sme_abundance][np.isfinite(abund_param[sme_abundance])],
                         keys='sobject_id', join_type='inner')
-    abund_values_train = param_joined[sme_abundance].data
     idx_spectra_train = np.in1d(galah_param['sobject_id'], param_joined['sobject_id'])
 
-    print 'Number of train objects: ' + str(np.sum(idx_spectra_train))
+    abund_values_train = param_joined[sme_abundance, 'teff_guess', 'feh_guess', 'logg_guess'].to_pandas().values
+    normalizer_outptu = StandardScaler()
+    abund_values_train = normalizer_outptu.fit_transform(abund_values_train)
+
+    n_train_sme = np.sum(idx_spectra_train)
+    print 'Number of train objects: ' + str(n_train_sme)
     spectral_data_train = spectral_data[idx_spectra_train]
 
     # ann network - fully connected layers
@@ -135,20 +140,21 @@ for sme_abundance in sme_abundances_list:
     ann = ann_input
     # fully connected layers
     for n_nodes in n_dense_nodes:
-        ann = Dense(n_nodes, activation=None, name='Dense_'+str(n_nodes))(ann)
-        ann = PReLU(name='PReLU_'+str(n_nodes))(ann)
+        ann = Dense(n_nodes, activation=activation_function, name='Dense_'+str(n_nodes))(ann)
+        if activation_function is None:
+            ann = PReLU(name='PReLU_'+str(n_nodes))(ann)
         if dropout_learning and n_nodes > 1:
-            ann = Dropout(0.4, name='Dropout_'+str(n_nodes))(ann)
+            ann = Dropout(0.2, name='Dropout_'+str(n_nodes))(ann)
 
     abundance_ann = Model(ann_input, ann)
     abundance_ann.compile(optimizer='adam', loss='mse', metrics=['accuracy'])
     abundance_ann.summary()
 
     # define early stopping callback
-    earlystop = EarlyStopping(monitor='val_loss', patience=10, verbose=1, mode='auto')
+    earlystop = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='auto')
     # fit the NN model
     abundance_ann.fit(spectral_data_train, abund_values_train,
-                      epochs=100,
+                      epochs=125,
                       batch_size=128,
                       shuffle=True,
                       callbacks=[earlystop],
@@ -158,22 +164,39 @@ for sme_abundance in sme_abundances_list:
     # evaluate on all spectra
     print 'Predicting abundance values from spectra'
     abundance_predicted = abundance_ann.predict(spectral_data)
+    abundance_predicted = normalizer_outptu.inverse_transform(abundance_predicted)
 
     # add it to the final table
-    galah_param_complete[output_col] = abundance_predicted
+    galah_param_complete[output_col] = abundance_predicted[:, 0]
+
+    if activation_function is None:
+        plot_suffix = 'prelu'
+    else:
+        plot_suffix = activation_function
 
     # scatter plot of results to the reference cannon and sme values
     print 'Plotting graphs'
+    graphs_title = element.capitalize() + ' - number of SME learning objects is ' + str(n_train_sme)
+    plot_range = (np.nanmin(abund_param[sme_abundance]), np.nanmax(abund_param[sme_abundance]))
+    # first scatter graph - train points
+    plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
     plt.scatter(galah_param_complete[element+'_abund_sme'], galah_param_complete[output_col],
-                lw=0, s=0.2, alpha=0.1, c='black')
+                lw=0, s=0.1, alpha=0.4, c='black')
+    plt.title(graphs_title)
     plt.xlabel('SME reference value')
     plt.ylabel('ANN computed value')
-    plt.savefig(element+'_ANN_sme', dpi=400)
+    plt.xlim(plot_range)
+    plt.ylim(plot_range)
+    plt.savefig(element+'_ANN_sme_'+plot_suffix+'.png', dpi=400)
     plt.close()
+    # second graph - cannon points
     plt.scatter(galah_param_complete[element + '_abund_cannon'], galah_param_complete[output_col],
-                lw=0, s=0.2, alpha=0.1, c='black')
+                lw=0, s=0.1, alpha=0.2, c='black')
+    plt.title(graphs_title)
     plt.xlabel('CANNON reference value')
     plt.ylabel('ANN computed value')
-    plt.savefig(element + '_ANN_cannon', dpi=400)
+    plt.xlim(plot_range)
+    plt.ylim(plot_range)
+    plt.savefig(element + '_ANN_cannon_'+plot_suffix+'.png', dpi=400)
     plt.close()
 

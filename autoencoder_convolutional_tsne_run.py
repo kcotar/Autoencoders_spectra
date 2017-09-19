@@ -16,27 +16,28 @@ from tsne import *
 # settings
 normalize_data = True
 remove_flagged = False
-snr_cut = True
-perp = 30
-theta = 0.3
+snr_cut = False
+perp = 40
+theta = 0.4
 seed = 1337
 n_middle = 50
-use_bands = [2]
-cae_string = 'CAE_16_5_4_16_5_4_32_3_2'
-suffix_out = '_ccd3only_manh'
+use_bands = [0]
+cae_string = 'CAE_32_17_4_0_5_4_16_7_4'
+ae_string = 'AE_1000_'+str(n_middle)
+suffix_out = '_ccd'+''.join([str(c+1) for c in use_bands])
 
 # input data
 galah_data_input = '/home/klemen/GALAH_data/'
 galah_param_file = 'sobject_iraf_52_reduced.fits'
 galah_tsne_1_0 = 'tsne_class_1_0.csv'
 
-reduced_spectra_files = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF_'+cae_string+'_AE_1000_'+str(n_middle)+'_encoded.csv',
-                         'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF_'+cae_string+'_AE_1000_'+str(n_middle)+'_encoded.csv',
-                         'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF_'+cae_string+'_AE_1000_'+str(n_middle)+'_encoded.csv',
-                         'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_RF_'+cae_string+'_AE_600_'+str(n_middle)+'_encoded.csv']
+reduced_spectra_files = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF_'+cae_string+'_'+ae_string+'_encoded.csv',
+                         'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF_'+cae_string+'_'+ae_string+'_encoded.csv',
+                         'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF_'+cae_string+'_'+ae_string+'_encoded.csv',
+                         'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_RF_'+cae_string+'_'+ae_string+'_encoded.csv']
 
 # save results in csv format
-csv_out_filename = 'tsne_results_perp'+str(perp)+'_theta'+str(theta)+'_'+cae_string+'_AE_1000_'+str(n_middle)+suffix_out
+csv_out_filename = 'tsne_results_perp'+str(perp)+'_theta'+str(theta)+'_'+cae_string+'_'+ae_string+suffix_out
 if remove_flagged:
     csv_out_filename += '_redflagok'
 if normalize_data:
@@ -58,7 +59,6 @@ if snr_cut and not remove_flagged:
 
 if remove_flagged and not snr_cut:
     idx_ok_lines = galah_param['red_flag'] == 0
-    galah_param = galah_param[idx_ok_lines]
     csv_spectra_skip_rows = np.where(np.logical_not(idx_ok_lines))[0]
     print 'Objects after removing flagged data: '+str(np.sum(idx_ok_lines))
 else:
@@ -87,7 +87,7 @@ else:
 
     # run tSNE
     tsne_result = bh_tsne(reduced_data, no_dims=2, perplexity=perp, theta=theta, randseed=seed, verbose=True,
-                          distance='manhattan', path='/home/klemen/tSNE_test/')
+                          distance='euclidean', path='/home/klemen/tSNE_test/')
     tsne_ax1, tsne_ax2 = tsne_results_to_columns(tsne_result)
 
     tsne_data = galah_param['sobject_id', 'galah_id']

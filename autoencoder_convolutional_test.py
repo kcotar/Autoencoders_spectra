@@ -19,12 +19,17 @@ import pandas as pd
 pc_name = gethostname()
 
 # input data
-if pc_name == 'gigli' or 'klemen-P5K-E':
+if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
+    tsne_path = '/home/klemen/tSNE_test/'
     galah_data_input = '/home/klemen/GALAH_data/'
     imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
+    imp.load_source('tsne_functions', '../tSNE_test/tsne_functions.py')
+    from tsne_functions import *
 else:
+    tsne_path = '/data4/cotar/'
     galah_data_input = '/data4/cotar/'
 from helper_functions import move_to_dir
+from tsne_functions import *
 
 galah_param_file = 'sobject_iraf_52_reduced.fits'
 spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.csv',
@@ -41,14 +46,15 @@ save_models = True
 output_results = True
 output_plots = True
 limited_rows = False
-snr_cut = True
+snr_cut = False
+run_tsne_test = True
 
 # reading settings
-spectra_get_cols = [4000, 4000, 4000, 2016]
+spectra_get_cols = [4000, 4000, 1000, 2016]
 
 # AE NN band dependant settings
 n_dense_first = [500, 500, 500, 300]  # number of nodes in first and third fully connected layer of AE
-n_dense_middle = [50, 50, 50, 50]  # number of nodes in the middle fully connected layer of AE
+n_dense_middle = [25, 25, 25, 25]  # number of nodes in the middle fully connected layer of AE
 
 # configuration of CAE network is the same for every spectral band:
 # convolution layer 1
@@ -70,7 +76,7 @@ P_s_3 = 2
 
 galah_param = Table.read(galah_data_input + galah_param_file)
 
-for i_band in [1]:
+for i_band in [2]:
 
     spectra_file = spectra_file_list[i_band]
     # data availability check
@@ -119,6 +125,15 @@ for i_band in [1]:
     if n_bad_spectra > 0:
         print 'Correcting '+str(n_bad_spectra)+' bad flux values in read spectra.'
         spectral_data[idx_bad_spectra] = 1.  # remove nan values with theoretical continuum flux value
+
+    # run t-SNE projection
+    if run_tsne_test:
+        print 'Running tSNE on input spectra'
+        perp = 40
+        theta = 0.4
+        seed = 1337
+        tsne_result = bh_tsne(spectral_data, no_dims=2, perplexity=perp, theta=theta, randseed=seed, verbose=True,
+                              distance='euclidean', path=tsne_path)
 
     # create suffix for both network parts
     cae_suffix = '_CAE_'+str(C_f_1)+'_'+str(C_k_1)+'_'+str(P_s_1)+\
@@ -280,7 +295,11 @@ for i_band in [1]:
     # re-create deconvolution part from the convolutional_nn network
     input_decoder_cae = Input(shape=(X_out_encoded_shape[1], X_out_encoded_shape[2]))
     decoder_cae = input_decoder_cae
-    for cae_layer in convolutional_nn.layers[10:]:
+    if C_f_2 > 0:
+        layer_start = 10
+    else:
+        layer_start = 7
+    for cae_layer in convolutional_nn.layers[layer_start:]:
         decoder_cae = cae_layer(decoder_cae)
     convolutional_decoder = Model(input_decoder_cae, decoder_cae)
 
