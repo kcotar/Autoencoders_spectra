@@ -47,27 +47,30 @@ output_results = True
 output_plots = True
 limited_rows = False
 snr_cut = False
-run_tsne_test = True
+run_tsne_test = False
 
 # reading settings
-spectra_get_cols = [4000, 4000, 1000, 2016]
+spectra_get_cols = [4000, 4000, 4000, 2016]
 
 # AE NN band dependant settings
-n_dense_first = [500, 500, 500, 300]  # number of nodes in first and third fully connected layer of AE
-n_dense_middle = [25, 25, 25, 25]  # number of nodes in the middle fully connected layer of AE
+n_dense_first = [1000, 1000, 1000, 1000]  # number of nodes in first and third fully connected layer of AE
+n_dense_middle = [50, 50, 50, 50]  # number of nodes in the middle fully connected layer of AE
 
 # configuration of CAE network is the same for every spectral band:
 # convolution layer 1
-C_f_1 = 16  # number of filters
-C_k_1 = 5  # size of convolution kernel
+C_f_1 = 32  # number of filters
+C_k_1 = 15  # size of convolution kernel
+C_s_1 = 4  # strides value
 P_s_1 = 4  # size of pooling operator
 # convolution layer 2
-C_f_2 = 16
+C_f_2 = 0
 C_k_2 = 5
+C_s_2 = 1
 P_s_2 = 4
 # convolution layer 3
-C_f_3 = 8
-C_k_3 = 3
+C_f_3 = 16
+C_k_3 = 7
+C_s_3 = 1
 P_s_3 = 2
 
 # --------------------------------------------------------
@@ -136,9 +139,9 @@ for i_band in [2]:
                               distance='euclidean', path=tsne_path)
 
     # create suffix for both network parts
-    cae_suffix = '_CAE_'+str(C_f_1)+'_'+str(C_k_1)+'_'+str(P_s_1)+\
-                 '_'+str(C_f_2)+'_'+str(C_k_2)+'_'+str(P_s_2)+\
-                 '_'+str(C_f_3)+'_'+str(C_k_3)+'_'+str(P_s_3)
+    cae_suffix = '_CAE_'+str(C_f_1)+'_'+str(C_k_1)+'_'+str(C_s_1)+'_'+str(P_s_1)+\
+                 '_'+str(C_f_2)+'_'+str(C_k_2)+'_'+str(C_s_2)+'_'+str(P_s_2)+\
+                 '_'+str(C_f_3)+'_'+str(C_k_3)+'_'+str(C_s_3)+'_'+str(P_s_3)
     ae_suffix = '_AE_'+str(n_dense_first[i_band])+'_'+str(n_dense_middle[i_band])
     # output data names
     normalizer_file = spectra_file[:-4] + '_' + str(spectra_get_cols[i_band]) + suffix + '_normalizer.pkl'
@@ -172,25 +175,25 @@ for i_band in [2]:
     # create Keras Input
     input_cae = Input(shape=(X_in.shape[1], 1))
 
-    x = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_1')(input_cae)
+    x = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_1', strides=C_s_1)(input_cae)
     x = PReLU(name='R_1')(x)
     x = MaxPooling1D(P_s_1, padding='same', name='P_1')(x)
     if C_f_2 > 0:
-        x = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2')(x)
+        x = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2', strides=C_s_2)(x)
         x = PReLU(name='R_2')(x)
         x = MaxPooling1D(P_s_2, padding='same', name='P_2')(x)
-    x = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3')(x)
+    x = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3', strides=C_s_3)(x)
     x = PReLU(name='R_3')(x)
     encoded_cae = MaxPooling1D(P_s_3, padding='same', name='P_3')(x)
 
-    x = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_4')(encoded_cae)
+    x = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_4', dilation_rate=C_s_3)(encoded_cae)
     x = PReLU(name='R_4')(x)
     x = UpSampling1D(P_s_3, name='S_4')(x)
     if C_f_2 > 0:
-        x = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_5')(x)
+        x = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_5', dilation_rate=C_s_2)(x)
         x = PReLU(name='R_5')(x)
         x = UpSampling1D(P_s_2, name='S_5')(x)
-    x = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_6')(x)
+    x = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_6', dilation_rate=C_s_1)(x)
     x = PReLU(name='R_6')(x)
     x = UpSampling1D(P_s_1, name='S_6')(x)
     x = Conv1D(1, C_k_1, activation=None, padding='same', name='C_7')(x)

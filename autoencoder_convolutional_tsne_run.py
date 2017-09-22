@@ -21,8 +21,8 @@ perp = 40
 theta = 0.4
 seed = 1337
 n_middle = 50
-use_bands = [0]
-cae_string = 'CAE_32_17_4_0_5_4_16_7_4'
+use_bands = [0, 2]
+cae_string = 'CAE_32_17_1_4_0_5_1_4_16_7_1_4'
 ae_string = 'AE_1000_'+str(n_middle)
 suffix_out = '_ccd'+''.join([str(c+1) for c in use_bands])
 
