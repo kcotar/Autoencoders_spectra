@@ -47,7 +47,7 @@ snr_cut = False
 
 # data training and handling
 train_multiple = True
-n_train_multiple = 5
+n_train_multiple = 23
 normalize_spectra = True
 normalize_abund_values = True
 use_all_nonnan_rows = True
@@ -59,7 +59,7 @@ activation_function = None  # if set to none defaults to PReLu
 # convolution layer 1
 C_f_1 = 256  # number of filters
 C_k_1 = 9  # size of convolution kernel
-C_s_1 = 2  # strides value
+C_s_1 = 1  # strides value
 P_s_1 = 4  # size of pooling operator
 # convolution layer 2
 C_f_2 = 128
@@ -71,7 +71,7 @@ C_f_3 = 128
 C_k_3 = 3
 C_s_3 = 1
 P_s_3 = 4
-n_dense_nodes = [1700, 400, 1]  # the last layer is output, size will be determined on the fly
+n_dense_nodes = [1800, 500, 1]  # the last layer is output, its size will be determined on the fly
 
 # --------------------------------------------------------
 # ---------------- Functions -----------------------------
@@ -84,35 +84,54 @@ def custom_error_function(y_true, y_pred):
     bool_finite = T.is_finite(y_true)
     return K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=-1)
 
+
+def read_spectra(spectra_file_list, line_list, get_elements=None, read_wvl_offset=0.1):  # in A
+    if get_elements is not None:
+        idx_list = np.in1d(line_list['Element'], get_elements, assume_unique=False)
+        line_list_read = line_list[idx_list]
+    else:
+        line_list_read = Table(line_list)
+    spectral_data = list([])
+    for i_band in [0, 1, 2, 3]:
+        spectra_file = spectra_file_list[i_band]
+        # determine what is to be read from the spectra
+        print 'Defining cols to be read'
+        abund_cols_read = list([])
+        spectra_file_split = spectra_file.split('_')
+        wvl_values = np.arange(float(spectra_file_split[3]), float(spectra_file_split[4]), float(spectra_file_split[6]))
+        for line in line_list_read:
+            idx_wvl = np.logical_and(wvl_values >= line['line_start'] - read_wvl_offset,
+                                     wvl_values <= line['line_end'] + read_wvl_offset)
+            if np.sum(idx_wvl) > 0:
+                abund_cols_read.append(np.where(idx_wvl)[0])
+        abund_cols_read = np.sort(np.hstack(abund_cols_read))
+        print len(abund_cols_read)
+        # do the actual reading of spectra
+        print 'Reading spectra file: ' + spectra_file
+        spectral_data.append(pd.read_csv(galah_data_input + spectra_file, sep=',', header=None,
+                                         na_values='nan', skiprows=None, usecols=abund_cols_read).values)
+
+    spectral_data = np.hstack(spectral_data)
+    print spectral_data.shape
+    return spectral_data
+
+
+def correct_spectra():
+    pass
+
 # --------------------------------------------------------
-# ---------------- Various algorithm settings ------------
+# ---------------- Data reading --------------------------
 # --------------------------------------------------------
 galah_param = Table.read(galah_data_input + galah_param_file)
 line_list = Table.read(galah_data_input + line_file, format='ascii.csv')
+abund_param = Table.read(galah_data_input + abund_param_file)
+cannon_abundances_list = [col for col in abund_param.colnames if '_abund_cannon' in col and 'e_' not in col and 'flag_' not in col]
+sme_abundances_list = [col for col in abund_param.colnames if '_abund_sme' in col and 'e_' not in col and 'flag_' not in col]
+# select only the ones with some datapoints
+sme_abundances_list = [col for col in sme_abundances_list if np.sum(np.isfinite(abund_param[col])) > 100]
 
-read_wvl_offset = 0.1  # in A
-spectral_data = list([])
-for i_band in [0, 1, 2, 3]:
-    spectra_file = spectra_file_list[i_band]
-    # determine what is to be read from the spectra
-    print 'Defining cols to be read'
-    abund_cols_read = list([])
-    spectra_file_split = spectra_file.split('_')
-    wvl_values = np.arange(float(spectra_file_split[3]), float(spectra_file_split[4]), float(spectra_file_split[6]))
-    for line in line_list:
-        idx_wvl = np.logical_and(wvl_values >= line['line_start'] - read_wvl_offset,
-                                 wvl_values <= line['line_end'] + read_wvl_offset)
-        if np.sum(idx_wvl) > 0:
-            abund_cols_read.append(np.where(idx_wvl)[0])
-    abund_cols_read = np.sort(np.hstack(abund_cols_read))
-    print len(abund_cols_read)
-    # do the actual reading of spectra
-    print 'Reading spectra file: ' + spectra_file
-    spectral_data.append(pd.read_csv(galah_data_input + spectra_file, sep=',', header=None,
-                                     na_values='nan', skiprows=None, usecols=abund_cols_read).values)
-
-spectral_data = np.hstack(spectral_data)
-print spectral_data.shape
+read_elements = [elem.split('_')[0].capitalize() for elem in sme_abundances_list]
+spectral_data = read_spectra(spectra_file_list, line_list, get_elements=read_elements)
 n_wvl_total = spectral_data.shape[1]
 
 # somehow handle cols with nan values, delete cols or fill in data
@@ -129,7 +148,7 @@ if normalize_spectra:
     spectral_data = normalizer.fit_transform(spectral_data)
 
 # prepare spectral data for the further use in the Keras library
-spectral_data = np.expand_dims(spectral_data, axis=2)  # not needed in this case, only convolution needs 3D arrays
+spectral_data = np.expand_dims(spectral_data, axis=2)
 
 output_dir = 'Abundance_determination'
 if train_multiple:
@@ -139,12 +158,6 @@ move_to_dir(output_dir)
 # --------------------------------------------------------
 # ---------------- Train ANN on a train set of abundances
 # --------------------------------------------------------
-abund_param = Table.read(galah_data_input + abund_param_file)
-cannon_abundances_list = [col for col in abund_param.colnames if '_abund_cannon' in col and 'e_' not in col and 'flag_' not in col]
-sme_abundances_list = [col for col in abund_param.colnames if '_abund_sme' in col and 'e_' not in col and 'flag_' not in col]
-# select only the ones with some datapoints
-sme_abundances_list = [col for col in sme_abundances_list if np.sum(np.isfinite(abund_param[col])) > 100]
-
 # final set of parameters
 galah_param_complete = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
                             abund_param[list(np.hstack(('sobject_id', cannon_abundances_list, sme_abundances_list)))],
@@ -157,8 +170,9 @@ galah_param_complete = galah_param_complete[np.isfinite(galah_param_complete['te
 print 'Size complete: ' + str(len(galah_param_complete))
 
 if train_multiple:
-    sme_abundances_list = list(combinations(sme_abundances_list, 4))
+    sme_abundances_list = list(combinations(sme_abundances_list, n_train_multiple))
 
+additional_train_feat = ['teff_guess', 'feh_guess', 'logg_guess']
 for sme_abundance in sme_abundances_list:
     if train_multiple:
         print 'Working on multiple abundance: ' + ' '.join(sme_abundance)
@@ -194,11 +208,20 @@ for sme_abundance in sme_abundances_list:
                         keys='sobject_id', join_type='inner')
     idx_spectra_train = np.in1d(galah_param['sobject_id'], param_joined['sobject_id'])
 
-    abund_values_train = param_joined[list(np.hstack((sme_abundance, 'teff_guess', 'feh_guess', 'logg_guess')))].to_pandas().values
+    abund_values_train = param_joined[list(np.hstack((sme_abundance, additional_train_feat)))].to_pandas().values
 
     if normalize_abund_values:
-        normalizer_outptu = StandardScaler()
-        abund_values_train = normalizer_outptu.fit_transform(abund_values_train)
+        # normalizer_outptu = StandardScaler()
+        # abund_values_train = normalizer_outptu.fit_transform(abund_values_train)
+        # another version to deal with NaN/Inf values
+        print 'Normalizing input train parameters'
+        n_train_feat = abund_values_train.shape[1]
+        train_feat_mean = np.zeros(n_train_feat)
+        train_feat_std = np.zeros(n_train_feat)
+        for i_f in range(n_train_feat):
+            train_feat_mean[i_f] = np.nanmean(abund_values_train[:, i_f])
+            train_feat_std[i_f] = np.nanstd(abund_values_train[:, i_f])
+            abund_values_train[:, i_f] = (abund_values_train[:, i_f] - train_feat_mean[i_f])/train_feat_std[i_f]
 
     n_train_sme = np.sum(idx_spectra_train)
     print 'Number of train objects: ' + str(n_train_sme)
@@ -258,22 +281,28 @@ for sme_abundance in sme_abundances_list:
     print 'Predicting abundance values from spectra'
     abundance_predicted = abundance_ann.predict(spectral_data)
     if normalize_abund_values:
-        abundance_predicted = normalizer_outptu.inverse_transform(abundance_predicted)
+        print 'Denormalizing output values of features'
+        # abundance_predicted = normalizer_outptu.inverse_transform(abundance_predicted)
+        # another option
+        for i_f in range(n_train_feat):
+            abundance_predicted[:, i_f] = abundance_predicted[:, i_f] * train_feat_std[i_f] + train_feat_mean[i_f]
 
     # add it to the final table
     for i_o in range(len(output_col)):
         galah_param_complete[output_col[i_o]] = abundance_predicted[:, i_o]
 
     if activation_function is None:
-        plot_suffix += 'prelu'
+        plot_suffix += '_prelu'
     else:
-        plot_suffix += activation_function
+        plot_suffix += '_'+activation_function
 
     # scatter plot of results to the reference cannon and sme values
     if train_multiple:
         sme_abundances_plot = sme_abundance
     else:
         sme_abundances_plot = [sme_abundance]
+
+    # sme_abundances_plot = np.hstack((sme_abundance, additional_train_feat))
     print 'Plotting graphs'
     for plot_abund in sme_abundances_plot:
         print ' plotting attribute - ' + plot_abund
@@ -283,7 +312,7 @@ for sme_abundance in sme_abundances_list:
         # first scatter graph - train points
         plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
         plt.scatter(galah_param_complete[elem_plot+'_abund_sme'], galah_param_complete[elem_plot+'_abund_ann'],
-                    lw=0, s=0.1, alpha=0.4, c='black')
+                    lw=0, s=0.3, alpha=0.4, c='black')
         plt.title(graphs_title)
         plt.xlabel('SME reference value')
         plt.ylabel('ANN computed value')
@@ -294,7 +323,7 @@ for sme_abundance in sme_abundances_list:
         # second graph - cannon points
         plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
         plt.scatter(galah_param_complete[elem_plot + '_abund_cannon'], galah_param_complete[elem_plot+'_abund_ann'],
-                    lw=0, s=0.1, alpha=0.2, c='black')
+                    lw=0, s=0.3, alpha=0.2, c='black')
         plt.title(graphs_title)
         plt.xlabel('CANNON reference value')
         plt.ylabel('ANN computed value')
