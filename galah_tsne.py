@@ -1,4 +1,4 @@
-import imp, os, socket
+import imp, os, socket, sys
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.externals import joblib
@@ -28,6 +28,7 @@ else:
     galah_data_input = '/data4/cotar/'
 from helper_functions import move_to_dir
 from tsne_functions import *
+tsne_temp = tsne_path+'temp/'
 
 galah_param_file = 'sobject_iraf_52_reduced.fits'
 spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.csv',
@@ -42,11 +43,11 @@ spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.csv',
 # algorithm settings
 output_results = True
 output_plots = True
-limited_rows = True
+limited_rows = False
 n_lim_rows = 5000
 snr_cut = False  # do not use in this configuration
 run_tsne_test = True
-run_float_tsne = True
+run_float_tsne = False
 
 # reading settings
 spectra_get_cols = [4000, 4000, 4000, 2016]
@@ -57,8 +58,15 @@ spectra_get_cols = [4000, 4000, 4000, 2016]
 
 galah_param = Table.read(galah_data_input + galah_param_file)
 
+input_arguments = sys.argv
+if len(input_arguments) > 1:
+    read_galah_bands = np.int8(input_arguments[1].split(','))
+    print 'Manual bands: '+str(read_galah_bands)
+else:
+    read_galah_bands = [0, 1, 2, 3]
+
 spectral_data = list([])
-for i_band in [0, 1, 2, 3]:
+for i_band in read_galah_bands:
     suffix = ''
 
     spectra_file = spectra_file_list[i_band]
@@ -139,7 +147,7 @@ if run_tsne_test:
     theta = 0.3
     seed = 1337
     tsne_result = bh_tsne(spectral_data, no_dims=2, perplexity=perp, theta=theta, randseed=seed, verbose=True,
-                          distance='euclidean', path=tsne_path, use_floats=run_float_tsne)
+                          distance='euclidean', path=tsne_path, use_floats=run_float_tsne, tmp_dir=tsne_temp)
 
     tsne_ax1, tsne_ax2 = tsne_results_to_columns(tsne_result)
 
