@@ -22,7 +22,6 @@ if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
     galah_data_input = '/home/klemen/GALAH_data/'
     imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
     imp.load_source('tsne_functions', '../tSNE_test/tsne_functions.py')
-    from tsne_functions import *
 else:
     tsne_path = '/data4/cotar/'
     galah_data_input = '/data4/cotar/'
@@ -146,10 +145,15 @@ if run_tsne_test:
     perp = 30
     theta = 0.3
     seed = 1337
-    tsne_result = bh_tsne(spectral_data, no_dims=2, perplexity=perp, theta=theta, randseed=seed, verbose=True,
-                          distance='euclidean', path=tsne_path, use_floats=run_float_tsne, tmp_dir=tsne_temp)
+    tsne_dim = 3
+    tsne_result = bh_tsne(spectral_data, no_dims=tsne_dim, perplexity=perp, theta=theta, randseed=seed, verbose=True,
+                          distance='euclidean', path=tsne_path, use_floats=run_float_tsne, tmp_dir=tsne_temp,
+                          delete_inputs=True)
 
-    tsne_ax1, tsne_ax2 = tsne_results_to_columns(tsne_result)
+    if tsne_dim > 2:
+        tsne_ax1, tsne_ax2, tsne_ax3 = tsne_results_to_columns(tsne_result, n_dim=tsne_dim)
+    else:
+        tsne_ax1, tsne_ax2 = tsne_results_to_columns(tsne_result, n_dim=tsne_dim)
 
     csv_out_filename = 'tsne_results_galah_perp'+str(perp)+'_theta'+str(theta)+'_ccd1234'+suffix
 
@@ -157,6 +161,8 @@ if run_tsne_test:
         tsne_data = galah_param['sobject_id', 'galah_id']
         tsne_data.add_column(Column(name='tsne_axis_1', data=tsne_ax1, dtype=np.float32))
         tsne_data.add_column(Column(name='tsne_axis_2', data=tsne_ax2, dtype=np.float32))
+        if tsne_dim > 2:
+            tsne_data.add_column(Column(name='tsne_axis_3', data=tsne_ax3, dtype=np.float32))
         tsne_data.write(csv_out_filename, format='ascii.csv')
 
     if output_plots:

@@ -49,8 +49,11 @@ limited_rows = False
 snr_cut = False
 run_tsne_test = False
 
+global_normalization = True
+zero_mean_only = False
+
 # reading settings
-spectra_get_cols = [4000, 4000, 4000, 2016]
+spectra_get_cols = [4000, 4000, 2000, 2016]
 
 # AE NN band dependant settings
 n_dense_first = [1000, 1000, 1000, 1000]  # number of nodes in first and third fully connected layer of AE
@@ -58,18 +61,18 @@ n_dense_middle = [50, 50, 50, 50]  # number of nodes in the middle fully connect
 
 # configuration of CAE network is the same for every spectral band:
 # convolution layer 1
-C_f_1 = 32  # number of filters
-C_k_1 = 15  # size of convolution kernel
-C_s_1 = 4  # strides value
+C_f_1 = 16  # number of filters
+C_k_1 = 5  # size of convolution kernel
+C_s_1 = 1  # strides value
 P_s_1 = 4  # size of pooling operator
 # convolution layer 2
-C_f_2 = 0
+C_f_2 = 16
 C_k_2 = 5
 C_s_2 = 1
 P_s_2 = 4
 # convolution layer 3
-C_f_3 = 16
-C_k_3 = 7
+C_f_3 = 8
+C_k_3 = 3
 C_s_3 = 1
 P_s_3 = 2
 
@@ -115,6 +118,12 @@ for i_band in [2]:
     else:
         skip_rows = None
 
+    # add some additional suffix describing processing parameters
+    if global_normalization:
+        suffix += '_globalnorm'
+    if zero_mean_only:
+        suffix += '_zeromean'
+
     # --------------------------------------------------------
     # ---------------- Data reading and handling -------------
     # --------------------------------------------------------
@@ -153,16 +162,26 @@ for i_band in [2]:
     print 'AE:  ' + ae_suffix
 
     # normalize data (flux at every wavelength)
-    if os.path.isfile(normalizer_file):
-        print 'Reading normalization parameters'
-        normalizer = joblib.load(normalizer_file)
+    if global_normalization:
+        # TODO: save and recover normalization parameters
+        global_norm_param = [np.mean(spectral_data), np.std(spectral_data)]
+        spectral_data_norm = spectral_data - global_norm_param[0]
+        if not zero_mean_only:
+            spectral_data_norm /= global_norm_param[1]
     else:
-        normalizer = StandardScaler()
-        normalizer.fit(spectral_data)
-        if save_models:
-            print 'Saving normalization parameters'
-            joblib.dump(normalizer, normalizer_file)
-    spectral_data_norm = normalizer.transform(spectral_data)
+        if os.path.isfile(normalizer_file):
+            print 'Reading normalization parameters'
+            normalizer = joblib.load(normalizer_file)
+        else:
+            if zero_mean_only:
+                normalizer = StandardScaler(with_mean=True, with_std=False)
+            else:
+                normalizer = StandardScaler(with_mean=True, with_std=True)
+            normalizer.fit(spectral_data)
+            if save_models:
+                print 'Saving normalization parameters'
+                joblib.dump(normalizer, normalizer_file)
+        spectral_data_norm = normalizer.transform(spectral_data)
 
     # --------------------------------------------------------
     # ---------------- Convolutional autoencoder -------------

@@ -256,8 +256,8 @@ for sme_abundance in sme_abundances_list:
                 ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
         else:
             # output layer
-            # ann = Activation('sigmoid')(ann)
-            ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
+            ann = Activation('linear')(ann)
+            # ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
 
     abundance_ann = Model(ann_input, ann)
     if use_all_nonnan_rows:
