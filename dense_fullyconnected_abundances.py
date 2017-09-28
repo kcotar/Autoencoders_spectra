@@ -48,30 +48,33 @@ snr_cut = False
 # data training and handling
 train_multiple = True
 n_train_multiple = 23
-normalize_spectra = True
 normalize_abund_values = True
+
+normalize_spectra = True
+global_normalization = False
+zero_mean_only = False
 use_all_nonnan_rows = True
 
 # ann settings
-dropout_learning = True
-activation_function = None  # if set to none defaults to PReLu
+dropout_learning = False
+activation_function = 'linear'  # if set to none defaults to PReLu
 
 # convolution layer 1
 C_f_1 = 256  # number of filters
-C_k_1 = 9  # size of convolution kernel
+C_k_1 = 13  # size of convolution kernel
 C_s_1 = 1  # strides value
 P_s_1 = 4  # size of pooling operator
 # convolution layer 2
-C_f_2 = 128
-C_k_2 = 5
+C_f_2 = 256
+C_k_2 = 9
 C_s_2 = 1
 P_s_2 = 4
 # convolution layer 3
 C_f_3 = 128
-C_k_3 = 3
+C_k_3 = 7
 C_s_3 = 1
 P_s_3 = 4
-n_dense_nodes = [1800, 500, 1]  # the last layer is output, its size will be determined on the fly
+n_dense_nodes = [2000, 800, 1]  # the last layer is output, its size will be determined on the fly
 
 # --------------------------------------------------------
 # ---------------- Functions -----------------------------
@@ -141,11 +144,20 @@ if n_bad_spectra > 0:
     print 'Correcting '+str(n_bad_spectra)+' bad flux values in read spectra.'
     spectral_data[idx_bad_spectra] = 1.  # remove nan values with theoretical continuum flux value
 
-# normalize data set if requested
-if normalize_spectra:
-    print 'Normalizing data'
-    normalizer = StandardScaler()
-    spectral_data = normalizer.fit_transform(spectral_data)
+# normalize data (flux at every wavelength)
+if global_normalization:
+    # TODO: save and recover normalization parameters
+    global_norm_param = [np.mean(spectral_data), np.std(spectral_data)]
+    spectral_data = spectral_data - global_norm_param[0]
+    if not zero_mean_only:
+        spectral_data /= global_norm_param[1]
+else:
+    if zero_mean_only:
+        normalizer = StandardScaler(with_mean=True, with_std=False)
+    else:
+        normalizer = StandardScaler(with_mean=True, with_std=True)
+    normalizer.fit(spectral_data)
+    spectral_data = normalizer.transform(spectral_data)
 
 # prepare spectral data for the further use in the Keras library
 spectral_data = np.expand_dims(spectral_data, axis=2)
@@ -153,6 +165,8 @@ spectral_data = np.expand_dims(spectral_data, axis=2)
 output_dir = 'Abundance_determination'
 if train_multiple:
     output_dir += '_multiple_'+str(n_train_multiple)
+if C_s_1 > 1:
+    output_dir += '_stride'
 move_to_dir(output_dir)
 
 # --------------------------------------------------------
@@ -202,6 +216,12 @@ for sme_abundance in sme_abundances_list:
     if use_all_nonnan_rows:
         plot_suffix += '_with_nan'
 
+    # add some additional suffix describing processing parameters
+    if global_normalization:
+        plot_suffix += '_globalnorm'
+    if zero_mean_only:
+        plot_suffix += '_zeromean'
+
     # create a subset of spectra to be train on the sme values
     param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
                         abund_param[list(np.hstack(('sobject_id', sme_abundance)))][idx_abund_cols],
@@ -249,9 +269,11 @@ for sme_abundance in sme_abundances_list:
     # fully connected layers
     for n_nodes in n_dense_nodes:
         ann = Dense(n_nodes, activation=activation_function, name='Dense_'+str(n_nodes))(ann)
-        if dropout_learning and n_nodes > 25:
+        # add activation function to the layer
+        if n_nodes > 25:
             # internal fully connected layers in ann network
-            ann = Dropout(0.2, name='Dropout_'+str(n_nodes))(ann)
+            if dropout_learning:
+                ann = Dropout(0.2, name='Dropout_'+str(n_nodes))(ann)
             if activation_function is None:
                 ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
         else:
@@ -267,14 +289,14 @@ for sme_abundance in sme_abundances_list:
     abundance_ann.summary()
 
     # define early stopping callback
-    earlystop = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='auto')
+    earlystop = EarlyStopping(monitor='val_loss', patience=6, verbose=1, mode='auto')
     # fit the NN model
     abundance_ann.fit(spectral_data_train, abund_values_train,
                       epochs=150,
-                      batch_size=256,
+                      batch_size=512,
                       shuffle=True,
                       callbacks=[earlystop],
-                      validation_split=0.1,
+                      validation_split=0.05,
                       verbose=1)
 
     # evaluate on all spectra
@@ -302,6 +324,11 @@ for sme_abundance in sme_abundances_list:
     else:
         sme_abundances_plot = [sme_abundance]
 
+    # determine a feature to be used a colour of points
+    c_data = param_joined['teff_guess']
+    c_data_min = np.percentile(c_data, 1)
+    c_data_max = np.percentile(c_data, 99)
+
     # sme_abundances_plot = np.hstack((sme_abundance, additional_train_feat))
     print 'Plotting graphs'
     for plot_abund in sme_abundances_plot:
@@ -312,7 +339,8 @@ for sme_abundance in sme_abundances_list:
         # first scatter graph - train points
         plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
         plt.scatter(galah_param_complete[elem_plot+'_abund_sme'], galah_param_complete[elem_plot+'_abund_ann'],
-                    lw=0, s=0.3, alpha=0.4, c='black')
+                    lw=0, s=0.4, c=c_data, cmap='jet',
+                    vmin=c_data_min, vmax=c_data_max)
         plt.title(graphs_title)
         plt.xlabel('SME reference value')
         plt.ylabel('ANN computed value')
@@ -323,7 +351,8 @@ for sme_abundance in sme_abundances_list:
         # second graph - cannon points
         plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
         plt.scatter(galah_param_complete[elem_plot + '_abund_cannon'], galah_param_complete[elem_plot+'_abund_ann'],
-                    lw=0, s=0.3, alpha=0.2, c='black')
+                    lw=0, s=0.4, c=c_data, cmap='jet',
+                    vmin=c_data_min, vmax=c_data_max)
         plt.title(graphs_title)
         plt.xlabel('CANNON reference value')
         plt.ylabel('ANN computed value')

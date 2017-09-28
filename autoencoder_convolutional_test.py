@@ -24,7 +24,6 @@ if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
     galah_data_input = '/home/klemen/GALAH_data/'
     imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
     imp.load_source('tsne_functions', '../tSNE_test/tsne_functions.py')
-    from tsne_functions import *
 else:
     tsne_path = '/data4/cotar/'
     galah_data_input = '/data4/cotar/'

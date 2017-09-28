@@ -1,4 +1,5 @@
-import os, socket, sys
+import imp, os, socket, sys
+from skfeature.function.statistical_based import CFS, f_score, t_score
 
 from astropy.table import Table, join
 
@@ -20,8 +21,10 @@ pc_name = socket.gethostname()
 # input data
 if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
     galah_data_input = '/home/klemen/GALAH_data/'
+    imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
 else:
     galah_data_input = '/data4/cotar/'
+from helper_functions import move_to_dir
 
 galah_param_file = 'sobject_iraf_52_reduced.fits'
 galah_param_file_old = 'sobject_iraf_general_1.1.fits'
@@ -36,14 +39,24 @@ spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.csv',
 # --------------------------------------------------------
 
 
-def plot_selected_ranges(wvl_selected, wvl_range, wvl_step, png_name):
+def plot_selected_ranges(wvl_selected, wvl_range, wvl_step, png_name,
+                         spectra_f=None, spectra_w=None):
+    if spectra_f is not None and spectra_w is not None:
+        plt.plot(spectra_w, spectra_f, color='black', lw=0.1)
     for wvl in wvl_selected:
-        plt.axvspan(wvl-wvl_step/2., wvl+wvl_step/2., color='blue', alpha=0.75)
+        plt.axvspan(wvl-wvl_step/2., wvl+wvl_step/2., facecolor='blue', alpha=0.5, lw=0)
     plt.xlim(wvl_range)
     plt.ylim((0.4, 1.2))
     plt.tight_layout()
-    plt.savefig(png_name, dpi=400)
+    plt.show()
+    plt.savefig(png_name, dpi=500)
     plt.close()
+
+
+def get_best_wvl(wvl_scores, wvl, n_out):
+    best_wvl = wvl[np.argsort(wvl_scores)[-n_out:]]  # last because they are ordered in increasing order
+    return best_wvl
+
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -55,7 +68,19 @@ output_plots = True
 snr_cut = False  # do not use in this configuration
 
 # reading settings
-spectra_get_cols = [4000, 4000, 200, 2016]
+spectra_get_cols = [4000, 4000, 4000, 2016]
+
+input_arguments = sys.argv
+if len(input_arguments) > 1:
+    read_galah_bands = np.int8(input_arguments[1].split(','))
+    print 'Manual bands: '+str(read_galah_bands)
+else:
+    read_galah_bands = [0, 1, 2, 3]
+if len(input_arguments) > 2:
+    select_one_class = input_arguments[2]
+    print 'Manual class: '+str(select_one_class)
+else:
+    select_one_class = None
 
 # --------------------------------------------------------
 # ---------------- REFERENCE DATA ------------------------
@@ -68,25 +93,52 @@ galah_prob.filled(0)
 
 # determine cross-section between old and new dataset (dr51 and dr52)
 galah_common_sobject = join(galah_param, galah_param_old, keys='sobject_id', join_type='inner')['sobject_id']
+print 'Dr51 and dr52 crossection size: '+str(len(galah_common_sobject))
 
 # reassign problematic flags from strings to integers/numbers
-use_classes = ['hot stars', 'cool metal-poor giants', 'binary', 'mol. absorption bands', 'HaHb emission']
+use_classes = ['binary', 'hot stars', 'cool metal-poor giants',  'mol. absorption bands', 'HaHb emission']
 remove_classes = ['0', 'problematic']
+if select_one_class is not None:
+    for use_class in use_classes:
+        if select_one_class != use_class:
+            remove_classes.append(use_class)
+    use_classes = [select_one_class]
+
 # first remove problematic and unknown classes from the list
 print 'Removing unknown/problematic objects'
 for i_r in range(len(remove_classes)):
     sobj_rem = galah_prob[galah_prob['published_reduced_class_proj1'] == remove_classes[i_r]]['sobject_id']
     if len(sobj_rem) > 0:
+        print ' Class "'+remove_classes[i_r]+'" has objects: '+str(len(sobj_rem))
         idx_use = np.in1d(galah_common_sobject, sobj_rem, invert=True)
         galah_common_sobject = galah_common_sobject[idx_use]
+
 # assign classes to the spectra of objects
 print 'Determining numeric classes'
 galah_prob_flag = np.zeros(len(galah_common_sobject))
 for i_u in range(len(use_classes)):
     sobj_class = galah_prob[galah_prob['published_reduced_class_proj1'] == use_classes[i_u]]['sobject_id']
     if len(sobj_class) > 0:
+        print ' Class "' + use_classes[i_u] + '" has objects: ' + str(len(sobj_class))
         idx_class = np.in1d(galah_common_sobject, sobj_class, invert=False)
         galah_prob_flag[idx_class] = i_u+1
+
+# create class statistics
+flag_uniq, flag_counts = np.unique(galah_prob_flag, return_counts=True)
+n_ok_obj = np.sum(flag_counts[flag_uniq == 0])
+print 'Non-problematic objects: '+str(n_ok_obj)
+n_bad_obj = np.sum(flag_counts[flag_uniq != 0])
+print 'Problematic objects: '+str(n_bad_obj)
+# create more balanced dataset for classification problem
+if n_ok_obj > n_bad_obj*2:
+    print 'Balancing number of objects in classes'
+    sobj_ok = galah_common_sobject[galah_prob_flag == 0]
+    # select random subset of ok objects
+    sobj_ok_sel = sobj_ok[np.int64(np.random.rand(n_bad_obj*2)*n_ok_obj)]
+    sobj_sel = np.hstack((sobj_ok_sel, galah_common_sobject[galah_prob_flag > 0]))
+    idx_sel = np.in1d(galah_common_sobject, sobj_sel)
+    galah_common_sobject = galah_common_sobject[idx_sel]
+    galah_prob_flag = galah_prob_flag[idx_sel]
 
 # determine spectral data rows to be read
 skip_rows = np.where(np.in1d(galah_param['sobject_id'], galah_common_sobject, invert=True))[0]
@@ -96,16 +148,15 @@ print 'Rows to be read: '+str(len(galah_param)-len(skip_rows))
 # ---------------- READ SPECTRA --------------------------
 # --------------------------------------------------------
 
-input_arguments = sys.argv
-if len(input_arguments) > 1:
-    read_galah_bands = np.int8(input_arguments[1].split(','))
-    print 'Manual bands: '+str(read_galah_bands)
+if select_one_class is None:
+    move_to_dir('Features_all-classes')
 else:
-    read_galah_bands = [0, 1, 2, 3]
+    move_to_dir('Features_'+select_one_class)
 
 spectral_data = list([])
 for i_band in read_galah_bands:
-    suffix = ''
+    suffix = '_b'+str(i_band+1)
+    suffix += ''
 
     spectra_file = spectra_file_list[i_band]
     # data availability check
@@ -124,54 +175,118 @@ for i_band in read_galah_bands:
     # select the middle portion of the spectra, that should be free of nan values
     col_start = int(n_wvl/2. - spectra_get_cols[i_band]/2.)
     col_end = int(col_start + spectra_get_cols[i_band])
+    get_cols = range(col_start, col_end)
+    wvl_read = wvl_range[get_cols]
 
     # --------------------------------------------------------
     # ---------------- Data reading and handling -------------
     # --------------------------------------------------------
     print 'Reading spectral data from {:07.2f} to {:07.2f}'.format(wvl_range[col_start], wvl_range[col_end])
     spectral_data.append(pd.read_csv(galah_data_input + spectra_file, sep=',', header=None, na_values='nan', dtype=np.float16,  # float16 is more than enough
-                                     usecols=range(col_start, col_end), skiprows=skip_rows).values)
+                                     usecols=get_cols, skiprows=skip_rows).values)
 
-spectral_data = np.hstack(spectral_data)
-print spectral_data.shape
-n_wvl_total = spectral_data.shape[1]
+    spectral_data = np.hstack(spectral_data)
+    print spectral_data.shape
+    n_wvl_total = spectral_data.shape[1]
 
-# somehow handle cols with nan values, delete cols or fill in data
-idx_bad_spectra = np.where(np.logical_not(np.isfinite(spectral_data)))
-n_bad_spectra = len(idx_bad_spectra[0])
-if n_bad_spectra > 0:
-    print 'Correcting '+str(n_bad_spectra)+' bad flux values in read spectra.'
-    spectral_data[idx_bad_spectra] = 1.  # remove nan values with theoretical continuum flux value
+    med_spectra = np.median(spectral_data, axis=0)
 
-# --------------------------------------------------------
-# ---------------- FEATURE SELECTION PROCESS -------------
-# --------------------------------------------------------
+    # somehow handle cols with nan values, delete cols or fill in data
+    idx_bad_spectra = np.where(np.logical_not(np.isfinite(spectral_data)))
+    n_bad_spectra = len(idx_bad_spectra[0])
+    if n_bad_spectra > 0:
+        print 'Correcting '+str(n_bad_spectra)+' bad flux values in read spectra.'
+        spectral_data[idx_bad_spectra] = 1.  # remove nan values with theoretical continuum flux value
 
-# Create the RFE object and rank flux at each pixel
-n_features_out = 100
-print 'Performing RFE feature selection'
-svc_classifier = SVC(kernel="linear", C=1)
-rfe_selection = RFE(estimator=svc_classifier, n_features_to_select=n_features_out, step=0.05, verbose=1)
-rfe_selection.fit(spectral_data, galah_prob_flag)
-wvl_ranking_rfe = rfe_selection.ranking_  # selected features are marked with 1, others that were eliminated are increasing in number
-print wvl_ranking_rfe
-wvl_selected_rfe = wvl_range[wvl_ranking_rfe == 1]
-plot_selected_ranges(wvl_selected_rfe, (wlv_begin, wlv_end), wlv_step, 'rfe_selected.png')
+    # handle extreme values in data
+    val_large = 2.5
+    idx_large = np.where(spectral_data > val_large)
+    n_bad_spectra = len(idx_large[0])
+    if n_bad_spectra > 0:
+        print 'Correcting '+str(n_bad_spectra)+' large flux values.'
+        spectral_data[idx_large] = val_large  # remove nan values with theoretical continuum flux value
 
-print 'Performing KBest feature selection.'
-kbest_selection = SelectKBest(chi2, k=n_features_out)
-kbest_selection.fit(spectral_data, galah_prob_flag)
-wvl_scores_kbest = rfe_selection.scores_  # higher score -> better feture
-print wvl_scores_kbest
-wvl_selected_kbest = wvl_range[np.argsort(wvl_scores_kbest)[-n_features_out:]]  # last because they are ordered in increasing order
-plot_selected_ranges(wvl_selected_kbest, (wlv_begin, wlv_end), wlv_step, 'kbest_selected.png')
+    val_negative = 0.01
+    idx_negative = np.where(spectral_data < val_negative)
+    n_bad_spectra = len(idx_negative[0])
+    if n_bad_spectra > 0:
+        print 'Correcting '+str(n_bad_spectra)+' negative flux values.'
+        spectral_data[idx_negative] = val_negative  # remove nan values with theoretical continuum flux value
 
-print 'Performing Feature Importance selection.'
-etrees_selection = ExtraTreesClassifier()
-etrees_selection.fit(spectral_data, galah_prob_flag)
-wvl_importance_etrees = etrees_selection.feature_importances_  # higher importance -> better feture
-print wvl_importance_etrees
-wvl_selected_etrees = wvl_range[np.argsort(wvl_importance_etrees)[-n_features_out:]]
-plot_selected_ranges(wvl_selected_etrees, (wlv_begin, wlv_end), wlv_step, 'etrees_selected.png')
 
+    # --------------------------------------------------------
+    # ---------------- FEATURE SELECTION PROCESS -------------
+    # --------------------------------------------------------
+
+    # Create the RFE object and rank flux at each pixel
+    n_features_out = 100
+
+    print 'Performing KBest feature selection 1.'
+    kbest_selection = SelectKBest(chi2, k='all')
+    kbest_selection.fit(spectral_data, galah_prob_flag)
+    wvl_scores_kbest = kbest_selection.scores_  # higher score -> better feature
+    print wvl_scores_kbest
+    plot_selected_ranges(get_best_wvl(wvl_scores_kbest, wvl_read, n_features_out),
+                         (wlv_begin, wlv_end), wlv_step, 'kbest_selected_chi2'+suffix+'.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+
+
+    print 'Performing Feature Importance selection.'
+    etrees_selection = ExtraTreesClassifier()
+    etrees_selection.fit(spectral_data, galah_prob_flag)
+    wvl_importance_etrees = etrees_selection.feature_importances_  # higher importance -> better feature
+    print wvl_importance_etrees
+    plot_selected_ranges(get_best_wvl(wvl_importance_etrees, wvl_read, n_features_out),
+                         (wlv_begin, wlv_end), wlv_step, 'etrees_selected'+suffix+'.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+
+    from skfeature.function.similarity_based import fisher_score, reliefF
+    print 'Fisher score'
+    wvl_scores_fisher = fisher_score.fisher_score(spectral_data, galah_prob_flag)
+    print wvl_scores_fisher
+    plot_selected_ranges(get_best_wvl(wvl_scores_fisher, wvl_read, n_features_out),
+                         (wlv_begin, wlv_end), wlv_step, 'fisher_selected'+suffix+'.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+
+    print 'RelierF score'
+    wvl_scores_reliefF = reliefF.reliefF(spectral_data, galah_prob_flag, k=10)
+    print wvl_scores_reliefF
+    plot_selected_ranges(get_best_wvl(wvl_scores_reliefF, wvl_read, n_features_out),
+                         (wlv_begin, wlv_end), wlv_step, 'reliefF_selected'+suffix+'.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+
+    if select_one_class is not None:
+        # TAKES A LONG TIME TO COMPLETE
+        print 'CFS statistical score'
+        wvl_scores_CFS = CFS.cfs(spectral_data, galah_prob_flag)
+        print wvl_scores_CFS
+        plot_selected_ranges(wvl_read[wvl_scores_CFS],
+                             (wlv_begin, wlv_end), wlv_step, 'cfs_selected'+suffix+'.png',
+                             spectra_f=med_spectra, spectra_w=wvl_read)
+
+    print 'F-score statistical score'
+    wvl_scores_fscore = f_score.f_score(spectral_data, galah_prob_flag)
+    print wvl_scores_fscore
+    plot_selected_ranges(get_best_wvl(wvl_scores_fscore, wvl_read, n_features_out),
+                         (wlv_begin, wlv_end), wlv_step, 'fscore_selected'+suffix+'.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+
+    print 'T-score statistical score'
+    wvl_scores_tscore = t_score.t_score(spectral_data, galah_prob_flag)
+    print wvl_scores_tscore
+    plot_selected_ranges(get_best_wvl(wvl_scores_tscore, wvl_read, n_features_out),
+                         (wlv_begin, wlv_end), wlv_step, 'tscore_selected'+suffix+'.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+
+    if select_one_class is not None:
+        # MAY TAKE TOO LONG
+        print 'Performing RFE feature selection'
+        svc_classifier = SVC(kernel="linear", C=1)
+        rfe_selection = RFE(estimator=svc_classifier, n_features_to_select=n_features_out, step=0.1, verbose=1)
+        rfe_selection.fit(spectral_data, galah_prob_flag)
+        wvl_ranking_rfe = rfe_selection.ranking_  # selected features are marked with 1, others that were eliminated are increasing in number
+        print wvl_ranking_rfe
+        wvl_selected_rfe = wvl_range[wvl_ranking_rfe == 1]
+        plot_selected_ranges(wvl_selected_rfe, (wlv_begin, wlv_end), wlv_step, 'rfe_selected'+suffix+'.png',
+                             spectra_f=med_spectra, spectra_w=wvl_read)
 
