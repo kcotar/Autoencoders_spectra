@@ -58,6 +58,49 @@ def get_best_wvl(wvl_scores, wvl, n_out):
     return best_wvl
 
 
+def final_best_wvl(in_best, wvl_scores, n_out, union=False):
+    best_wvl = np.argsort(wvl_scores)[-n_out:]
+    best_array = np.ndarray(len(in_best))
+    best_array.fill(False)
+    best_array[best_wvl] = True
+    if union:
+        return np.logical_or(in_best, best_array)
+    else:
+        return np.logical_and(in_best, best_array)
+
+
+def final_best_wvl_range(in_best_range, wvl, wvl_scores, n_out, range=0.3, union=False):  # range in Ang
+    best_range = np.ndarray(len(in_best_range))
+    best_range.fill(False)
+    best_wvl = get_best_wvl(wvl_scores, wvl, n_out)
+    for b_w in best_wvl:
+        idx_mark = np.logical_and(wvl > b_w - range,
+                                  wvl < b_w + range)
+        best_range[idx_mark] = True
+    if union:
+        return np.logical_or(in_best_range, best_range)
+    else:
+        return np.logical_and(in_best_range, best_range)
+
+
+def generate_ranges_outputs(wvl_selected, wvl, txt_path):
+    selection = False
+    txt_out = open(txt_path, 'w')
+    for i_wvl in range(len(wvl)):
+        if selection:
+            if not wvl_selected[i_wvl]:
+                selection = False
+                txt_out.write(' '+str(wvl[i_wvl])+'\n')
+        else:
+            if wvl_selected[i_wvl]:
+                selection = True
+                txt_out.write(str(wvl[i_wvl-1]))
+    # end of the wvl range check
+    if selection:
+        txt_out.write(' ' + str(wvl[-1]) + '\n')
+    txt_out.close()
+
+
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
 # --------------------------------------------------------
@@ -153,9 +196,9 @@ if select_one_class is None:
 else:
     move_to_dir('Features_'+select_one_class)
 
-spectral_data = list([])
+# spectral_data = list([])
 for i_band in read_galah_bands:
-    suffix = '_b'+str(i_band+1)
+    suffix = 'b'+str(i_band+1)+'_'
     suffix += ''
 
     spectra_file = spectra_file_list[i_band]
@@ -182,10 +225,10 @@ for i_band in read_galah_bands:
     # ---------------- Data reading and handling -------------
     # --------------------------------------------------------
     print 'Reading spectral data from {:07.2f} to {:07.2f}'.format(wvl_range[col_start], wvl_range[col_end])
-    spectral_data.append(pd.read_csv(galah_data_input + spectra_file, sep=',', header=None, na_values='nan', dtype=np.float16,  # float16 is more than enough
-                                     usecols=get_cols, skiprows=skip_rows).values)
+    spectral_data = pd.read_csv(galah_data_input + spectra_file, sep=',', header=None, na_values='nan', dtype=np.float16,  # float16 is more than enough
+                                     usecols=get_cols, skiprows=skip_rows).values
 
-    spectral_data = np.hstack(spectral_data)
+    # spectral_data = np.hstack(spectral_data)
     print spectral_data.shape
     n_wvl_total = spectral_data.shape[1]
 
@@ -218,8 +261,17 @@ for i_band in read_galah_bands:
     # ---------------- FEATURE SELECTION PROCESS -------------
     # --------------------------------------------------------
 
+    # crossection
+    wvl_best = np.ndarray(len(wvl_read))
+    wvl_best.fill(True)
+    wvl_best_range = np.array(wvl_best)
+    # union
+    wvl_best_union = np.ndarray(len(wvl_read))
+    wvl_best_union.fill(False)
+    wvl_best_range_union = np.array(wvl_best_union)
+
     # Create the RFE object and rank flux at each pixel
-    n_features_out = 100
+    n_features_out = 200
 
     print 'Performing KBest feature selection 1.'
     kbest_selection = SelectKBest(chi2, k='all')
@@ -227,8 +279,12 @@ for i_band in read_galah_bands:
     wvl_scores_kbest = kbest_selection.scores_  # higher score -> better feature
     print wvl_scores_kbest
     plot_selected_ranges(get_best_wvl(wvl_scores_kbest, wvl_read, n_features_out),
-                         (wlv_begin, wlv_end), wlv_step, 'kbest_selected_chi2'+suffix+'.png',
+                         (wlv_begin, wlv_end), wlv_step, suffix+'kbest_selected_chi2.png',
                          spectra_f=med_spectra, spectra_w=wvl_read)
+    wvl_best = final_best_wvl(wvl_best, wvl_scores_kbest, n_features_out)
+    wvl_best_range = final_best_wvl_range(wvl_best_range, wvl_read, wvl_scores_kbest, n_features_out)
+    wvl_best_union = final_best_wvl(wvl_best_union, wvl_scores_kbest, n_features_out, union=True)
+    wvl_best_range_union = final_best_wvl_range(wvl_best_range_union, wvl_read, wvl_scores_kbest, n_features_out, union=True)
 
 
     print 'Performing Feature Importance selection.'
@@ -237,56 +293,104 @@ for i_band in read_galah_bands:
     wvl_importance_etrees = etrees_selection.feature_importances_  # higher importance -> better feature
     print wvl_importance_etrees
     plot_selected_ranges(get_best_wvl(wvl_importance_etrees, wvl_read, n_features_out),
-                         (wlv_begin, wlv_end), wlv_step, 'etrees_selected'+suffix+'.png',
+                         (wlv_begin, wlv_end), wlv_step, suffix+'etrees_selected.png',
                          spectra_f=med_spectra, spectra_w=wvl_read)
+    wvl_best = final_best_wvl(wvl_best, wvl_importance_etrees, n_features_out)
+    wvl_best_range = final_best_wvl_range(wvl_best_range, wvl_read, wvl_importance_etrees, n_features_out)
+    wvl_best_union = final_best_wvl(wvl_best_union, wvl_importance_etrees, n_features_out, union=True)
+    wvl_best_range_union = final_best_wvl_range(wvl_best_range_union, wvl_read, wvl_importance_etrees, n_features_out, union=True)
 
     from skfeature.function.similarity_based import fisher_score, reliefF
     print 'Fisher score'
     wvl_scores_fisher = fisher_score.fisher_score(spectral_data, galah_prob_flag)
     print wvl_scores_fisher
     plot_selected_ranges(get_best_wvl(wvl_scores_fisher, wvl_read, n_features_out),
-                         (wlv_begin, wlv_end), wlv_step, 'fisher_selected'+suffix+'.png',
+                         (wlv_begin, wlv_end), wlv_step, suffix+'fisher_selected.png',
                          spectra_f=med_spectra, spectra_w=wvl_read)
+    wvl_best = final_best_wvl(wvl_best, wvl_scores_fisher, n_features_out)
+    wvl_best_range = final_best_wvl_range(wvl_best_range, wvl_read, wvl_scores_fisher, n_features_out)
+    wvl_best_union = final_best_wvl(wvl_best_union, wvl_scores_fisher, n_features_out, union=True)
+    wvl_best_range_union = final_best_wvl_range(wvl_best_range_union, wvl_read, wvl_scores_fisher, n_features_out,
+                                                union=True)
 
     print 'RelierF score'
     wvl_scores_reliefF = reliefF.reliefF(spectral_data, galah_prob_flag, k=10)
     print wvl_scores_reliefF
     plot_selected_ranges(get_best_wvl(wvl_scores_reliefF, wvl_read, n_features_out),
-                         (wlv_begin, wlv_end), wlv_step, 'reliefF_selected'+suffix+'.png',
+                         (wlv_begin, wlv_end), wlv_step, suffix+'reliefF_selected.png',
                          spectra_f=med_spectra, spectra_w=wvl_read)
+    wvl_best = final_best_wvl(wvl_best, wvl_scores_reliefF, n_features_out)
+    wvl_best_range = final_best_wvl_range(wvl_best_range, wvl_read, wvl_scores_reliefF, n_features_out)
+    wvl_best_union = final_best_wvl(wvl_best_union, wvl_scores_reliefF, n_features_out, union=True)
+    wvl_best_range_union = final_best_wvl_range(wvl_best_range_union, wvl_read, wvl_scores_reliefF, n_features_out,
+                                                union=True)
 
-    if select_one_class is not None:
-        # TAKES A LONG TIME TO COMPLETE
-        print 'CFS statistical score'
-        wvl_scores_CFS = CFS.cfs(spectral_data, galah_prob_flag)
-        print wvl_scores_CFS
-        plot_selected_ranges(wvl_read[wvl_scores_CFS],
-                             (wlv_begin, wlv_end), wlv_step, 'cfs_selected'+suffix+'.png',
-                             spectra_f=med_spectra, spectra_w=wvl_read)
+    # if select_one_class is not None:
+    #     # TAKES A LONG TIME TO COMPLETE
+    #     print 'CFS statistical score'
+    #     wvl_scores_CFS = CFS.cfs(spectral_data, galah_prob_flag)
+    #     print wvl_scores_CFS
+    #     plot_selected_ranges(wvl_read[wvl_scores_CFS],
+    #                          (wlv_begin, wlv_end), wlv_step, suffix+'cfs_selected.png',
+    #                          spectra_f=med_spectra, spectra_w=wvl_read)
 
     print 'F-score statistical score'
     wvl_scores_fscore = f_score.f_score(spectral_data, galah_prob_flag)
     print wvl_scores_fscore
     plot_selected_ranges(get_best_wvl(wvl_scores_fscore, wvl_read, n_features_out),
-                         (wlv_begin, wlv_end), wlv_step, 'fscore_selected'+suffix+'.png',
+                         (wlv_begin, wlv_end), wlv_step, suffix+'fscore_selected.png',
                          spectra_f=med_spectra, spectra_w=wvl_read)
+    wvl_best = final_best_wvl(wvl_best, wvl_scores_fscore, n_features_out)
+    wvl_best_range = final_best_wvl_range(wvl_best_range, wvl_read, wvl_scores_fscore, n_features_out)
+    wvl_best_union = final_best_wvl(wvl_best_union, wvl_scores_fscore, n_features_out, union=True)
+    wvl_best_range_union = final_best_wvl_range(wvl_best_range_union, wvl_read, wvl_scores_fscore, n_features_out,
+                                                union=True)
 
-    print 'T-score statistical score'
-    wvl_scores_tscore = t_score.t_score(spectral_data, galah_prob_flag)
-    print wvl_scores_tscore
-    plot_selected_ranges(get_best_wvl(wvl_scores_tscore, wvl_read, n_features_out),
-                         (wlv_begin, wlv_end), wlv_step, 'tscore_selected'+suffix+'.png',
-                         spectra_f=med_spectra, spectra_w=wvl_read)
-
-    if select_one_class is not None:
-        # MAY TAKE TOO LONG
-        print 'Performing RFE feature selection'
-        svc_classifier = SVC(kernel="linear", C=1)
-        rfe_selection = RFE(estimator=svc_classifier, n_features_to_select=n_features_out, step=0.1, verbose=1)
-        rfe_selection.fit(spectral_data, galah_prob_flag)
-        wvl_ranking_rfe = rfe_selection.ranking_  # selected features are marked with 1, others that were eliminated are increasing in number
-        print wvl_ranking_rfe
-        wvl_selected_rfe = wvl_range[wvl_ranking_rfe == 1]
-        plot_selected_ranges(wvl_selected_rfe, (wlv_begin, wlv_end), wlv_step, 'rfe_selected'+suffix+'.png',
+    if len(np.unique(galah_prob_flag)) == 2:
+        # NOTE: y should be guaranteed to a binary class vector
+        print 'T-score statistical score'
+        wvl_scores_tscore = t_score.t_score(spectral_data, galah_prob_flag)
+        print wvl_scores_tscore
+        plot_selected_ranges(get_best_wvl(wvl_scores_tscore, wvl_read, n_features_out),
+                             (wlv_begin, wlv_end), wlv_step, suffix+'tscore_selected.png',
                              spectra_f=med_spectra, spectra_w=wvl_read)
+        wvl_best = final_best_wvl(wvl_best, wvl_scores_tscore, n_features_out)
+        wvl_best_range = final_best_wvl_range(wvl_best_range, wvl_read, wvl_scores_tscore, n_features_out)
+        wvl_best_union = final_best_wvl(wvl_best, wvl_best_union, n_features_out, union=True)
+        wvl_best_range_union = final_best_wvl_range(wvl_best_range_union, wvl_read, wvl_scores_tscore, n_features_out,
+                                                    union=True)
 
+        # if select_one_class is not None:
+    #     # MAY TAKE TOO LONG
+    #     print 'Performing RFE feature selection'
+    #     svc_classifier = SVC(kernel="linear", C=1)
+    #     rfe_selection = RFE(estimator=svc_classifier, n_features_to_select=n_features_out, step=0.1, verbose=1)
+    #     rfe_selection.fit(spectral_data, galah_prob_flag)
+    #     wvl_ranking_rfe = rfe_selection.ranking_  # selected features are marked with 1, others that were eliminated are increasing in number
+    #     print wvl_ranking_rfe
+    #     print wvl_ranking_rfe.shape  # TODO: investigate strange shape of this array
+    #     print wvl_range.shape
+    #     wvl_selected_rfe = wvl_range[wvl_ranking_rfe == 1]
+    #     plot_selected_ranges(wvl_selected_rfe, (wlv_begin, wlv_end), wlv_step, suffix+'rfe_selected.png',
+    #                          spectra_f=med_spectra, spectra_w=wvl_read)
+
+    plot_selected_ranges(wvl_read[wvl_best],
+                         (wlv_begin, wlv_end), wlv_step, suffix + 'final.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+    plot_selected_ranges(wvl_read[wvl_best_range],
+                         (wlv_begin, wlv_end), wlv_step, suffix + 'final_ranges.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+    plot_selected_ranges(wvl_read[wvl_best_union],
+                         (wlv_begin, wlv_end), wlv_step, suffix + 'final_union.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+    plot_selected_ranges(wvl_read[wvl_best_range_union],
+                         (wlv_begin, wlv_end), wlv_step, suffix + 'final_union_ranges.png',
+                         spectra_f=med_spectra, spectra_w=wvl_read)
+
+    # output start and end points of the selected ranges
+    # generate csv file with outputs
+
+    generate_ranges_outputs(wvl_best, wvl_read, suffix + 'final.txt')
+    generate_ranges_outputs(wvl_best, wvl_best_range, suffix + 'final_ranges.txt')
+    generate_ranges_outputs(wvl_best, wvl_best_union, suffix + 'final_union.txt')
+    generate_ranges_outputs(wvl_best, wvl_best_range_union, suffix + 'final_union_ranges.txt')

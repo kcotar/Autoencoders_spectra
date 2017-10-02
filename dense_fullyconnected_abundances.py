@@ -283,9 +283,9 @@ for sme_abundance in sme_abundances_list:
 
     abundance_ann = Model(ann_input, ann)
     if use_all_nonnan_rows:
-        abundance_ann.compile(optimizer='adam', loss=custom_error_function, metrics=['accuracy'])
+        abundance_ann.compile(optimizer='Adadelta', loss=custom_error_function, metrics=['accuracy'])
     else:
-        abundance_ann.compile(optimizer='adam', loss='mse', metrics=['accuracy'])
+        abundance_ann.compile(optimizer='Adadelta', loss='mse', metrics=['accuracy'])
     abundance_ann.summary()
 
     # define early stopping callback
@@ -325,9 +325,12 @@ for sme_abundance in sme_abundances_list:
         sme_abundances_plot = [sme_abundance]
 
     # determine a feature to be used a colour of points
-    c_data = param_joined['teff_guess']
-    c_data_min = np.percentile(c_data, 1)
-    c_data_max = np.percentile(c_data, 99)
+    c_data = np.int64(param_joined['teff_guess'].data)
+    c_data_min = np.nanpercentile(c_data, 1)
+    c_data_max = np.nanpercentile(c_data, 99)
+    print c_data
+    print c_data_min
+    print c_data_max
 
     # sme_abundances_plot = np.hstack((sme_abundance, additional_train_feat))
     print 'Plotting graphs'
@@ -339,8 +342,8 @@ for sme_abundance in sme_abundances_list:
         # first scatter graph - train points
         plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
         plt.scatter(galah_param_complete[elem_plot+'_abund_sme'], galah_param_complete[elem_plot+'_abund_ann'],
-                    lw=0, s=0.4, c=c_data, cmap='jet',
-                    vmin=c_data_min, vmax=c_data_max)
+                    lw=0, s=0.4, c=c_data, cmap='jet', vmin=c_data_min, vmax=c_data_max)
+        plt.colorbar()
         plt.title(graphs_title)
         plt.xlabel('SME reference value')
         plt.ylabel('ANN computed value')
@@ -351,8 +354,8 @@ for sme_abundance in sme_abundances_list:
         # second graph - cannon points
         plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
         plt.scatter(galah_param_complete[elem_plot + '_abund_cannon'], galah_param_complete[elem_plot+'_abund_ann'],
-                    lw=0, s=0.4, c=c_data, cmap='jet',
-                    vmin=c_data_min, vmax=c_data_max)
+                    lw=0, s=0.4, c=c_data, cmap='jet', vmin=c_data_min, vmax=c_data_max)
+        plt.colorbar()
         plt.title(graphs_title)
         plt.xlabel('CANNON reference value')
         plt.ylabel('ANN computed value')
