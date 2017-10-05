@@ -83,18 +83,20 @@ def final_best_wvl_range(in_best_range, wvl, wvl_scores, n_out, range=0.3, union
         return np.logical_and(in_best_range, best_range)
 
 
-def generate_ranges_outputs(wvl_selected, wvl, txt_path):
+def generate_ranges_outputs(wvl_selected, wvl, txt_path, min_range=0):
     selection = False
     txt_out = open(txt_path, 'w')
     for i_wvl in range(len(wvl)):
         if selection:
             if not wvl_selected[i_wvl]:
                 selection = False
-                txt_out.write(' '+str(wvl[i_wvl])+'\n')
+                range_end = wvl[i_wvl]
+                if range_end - range_start > min_range:
+                    txt_out.write(str(range_start)+' '+str(range_end)+'\n')
         else:
             if wvl_selected[i_wvl]:
                 selection = True
-                txt_out.write(str(wvl[i_wvl-1]))
+                range_start = wvl[i_wvl-1]
     # end of the wvl range check
     if selection:
         txt_out.write(' ' + str(wvl[-1]) + '\n')
@@ -391,6 +393,6 @@ for i_band in read_galah_bands:
     # generate csv file with outputs
 
     generate_ranges_outputs(wvl_best, wvl_read, suffix + 'final.txt')
-    generate_ranges_outputs(wvl_best, wvl_best_range, suffix + 'final_ranges.txt')
-    generate_ranges_outputs(wvl_best, wvl_best_union, suffix + 'final_union.txt')
-    generate_ranges_outputs(wvl_best, wvl_best_range_union, suffix + 'final_union_ranges.txt')
+    generate_ranges_outputs(wvl_best_range, wvl_read, suffix + 'final_ranges.txt')
+    generate_ranges_outputs(wvl_best_union, wvl_read, suffix + 'final_union.txt')
+    generate_ranges_outputs(wvl_best_range_union, wvl_read, suffix + 'final_union_ranges.txt')
