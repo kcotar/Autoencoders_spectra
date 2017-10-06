@@ -46,7 +46,7 @@ output_plots = True
 limited_rows = False
 snr_cut = False
 output_reference_plot = True
-use_renormalized_spectra = False
+use_renormalized_spectra = True
 
 # data training and handling
 train_multiple = True
@@ -133,7 +133,10 @@ def correct_spectra():
 def rmse(f1, f2):
     diff = f1 - f2
     n_nonna = np.sum(np.isfinite(diff))
-    return np.sqrt(np.nansum(diff**2)/n_nonna)
+    if n_nonna == 0:
+        return np.nan
+    else:
+        return np.sqrt(np.nansum(diff**2)/n_nonna)
 
 
 # --------------------------------------------------------
@@ -168,9 +171,9 @@ if output_reference_plot:
     os.chdir('..')
 
 # check if renormalised data were requested
-for i_l in range(len(spectra_file_list)):
-    filename_split = spectra_file_list[i_l].split('.')
-    spectra_file_list[i_l] = filename_split[0] + '_renorm.' + filename_split[1]
+if use_renormalized_spectra:
+    for i_l in range(len(spectra_file_list)):
+        spectra_file_list[i_l] = spectra_file_list[i_l][:-4] + '_renorm.csv'
 
 # read spectral data for selected abundance absorption lines
 read_elements = [elem.split('_')[0].capitalize() for elem in sme_abundances_list]
@@ -328,8 +331,10 @@ for sme_abundance in sme_abundances_list:
     # set up regularizer if needed
     if use_regularizer:
         # use a combination of l1 and/or l2 regularizer
-        w_reg = regularizers.l1_l2(1e-5, 1e-5)
-        a_reg = regularizers.l1_l2(1e-5, 1e-5)
+        # w_reg = regularizers.l1_l2(1e-5, 1e-5)
+        # a_reg = regularizers.l1_l2(1e-5, 1e-5)
+        w_reg = regularizers.l2(1e-5)
+        a_reg = regularizers.l2(1e-5)
     else:
         # default values for Conv1D and Dense layers
         w_reg = None
@@ -340,16 +345,16 @@ for sme_abundance in sme_abundances_list:
     ann = ann_input
 
     ann = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_1', strides=C_s_1,
-                 W_regularizer=w_reg, activity_regularizer=a_reg)(ann)
+                 kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
     ann = PReLU(name='R_1')(ann)
     ann = MaxPooling1D(P_s_1, padding='same', name='P_1')(ann)
     if C_f_2 > 0:
         ann = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2', strides=C_s_2,
-                     W_regularizer=w_reg, activity_regularizer=a_reg)(ann)
+                     kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
         ann = PReLU(name='R_2')(ann)
         ann = MaxPooling1D(P_s_2, padding='same', name='P_2')(ann)
     ann = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3', strides=C_s_3,
-                 W_regularizer=w_reg, activity_regularizer=a_reg)(ann)
+                 kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
     ann = PReLU(name='R_3')(ann)
     encoded_cae = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
 
@@ -359,7 +364,7 @@ for sme_abundance in sme_abundances_list:
     # fully connected layers
     for n_nodes in n_dense_nodes:
         ann = Dense(n_nodes, activation=activation_function, name='Dense_'+str(n_nodes),
-                    W_regularizer=w_reg, activity_regularizer=a_reg)(ann)
+                    kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
         # add activation function to the layer
         if n_nodes > 25:
             # internal fully connected layers in ann network
