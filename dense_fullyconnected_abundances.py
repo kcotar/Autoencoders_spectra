@@ -46,7 +46,7 @@ output_plots = True
 limited_rows = False
 snr_cut = False
 output_reference_plot = True
-use_renormalized_spectra = True
+use_renormalized_spectra = False
 
 # data training and handling
 train_multiple = True
@@ -54,6 +54,7 @@ n_train_multiple = 23
 normalize_abund_values = True
 
 # data normalization and training set selection
+use_cannon_stellar_param = False
 normalize_spectra = True
 global_normalization = False
 zero_mean_only = False
@@ -64,21 +65,21 @@ squared_components = False
 dropout_learning = False
 dropout_rate = 0.2
 use_regularizer = False
-activation_function = None  # if set to none defaults to PReLu
+activation_function = 'linear'  # if set to none defaults to PReLu
 
 # convolution layer 1
-C_f_1 = 512  # number of filters
-C_k_1 = 13  # size of convolution kernel
+C_f_1 = 256  # number of filters
+C_k_1 = 11  # size of convolution kernel
 C_s_1 = 2  # strides value
 P_s_1 = 4  # size of pooling operator
 # convolution layer 2
-C_f_2 = 512
-C_k_2 = 11
+C_f_2 = 256
+C_k_2 = 9
 C_s_2 = 2
 P_s_2 = 4
 # convolution layer 3
-C_f_3 = 256
-C_k_3 = 9
+C_f_3 = 128
+C_k_3 = 7
 C_s_3 = 2
 P_s_3 = 4
 n_dense_nodes = [2500, 800, 1]  # the last layer is output, its size will be determined on the fly
@@ -220,7 +221,7 @@ move_to_dir(output_dir)
 # --------------------------------------------------------
 # final set of parameters
 galah_param_complete = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
-                            abund_param[list(np.hstack(('sobject_id', cannon_abundances_list, sme_abundances_list)))],
+                            abund_param[list(np.hstack(('sobject_id', cannon_abundances_list, sme_abundances_list, ['teff_cannon', 'logg_cannon', 'feh_cannon'])))],
                             keys='sobject_id', join_type='outer')
 # replace/fill strange masked (--) values with np.nan
 for c_col in galah_param_complete.colnames[1:]:   # 1: to skis sobject_id column
@@ -232,7 +233,10 @@ print 'Size complete: ' + str(len(galah_param_complete))
 if train_multiple:
     sme_abundances_list = list(combinations(sme_abundances_list, n_train_multiple))
 
-additional_train_feat = ['teff_guess', 'feh_guess', 'logg_guess']
+if use_cannon_stellar_param:
+    additional_train_feat = ['teff_cannon', 'feh_cannon', 'logg_cannon']
+else:
+    additional_train_feat = ['teff_guess', 'feh_guess', 'logg_guess']
 for sme_abundance in sme_abundances_list:
     if train_multiple:
         print 'Working on multiple abundance: ' + ' '.join(sme_abundance)
@@ -293,15 +297,18 @@ for sme_abundance in sme_abundances_list:
         plot_suffix += '_squared'
     if use_renormalized_spectra:
         plot_suffix += '_renorm'
+    plot_suffix += '_f'+str(C_f_1)+'-'+str(C_f_2)+'-'+str(C_f_3)
+    if use_cannon_stellar_param:
+        plot_suffix += '_cannon'
 
     # create a subset of spectra to be train on the sme values
     if squared_components:
         param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
-                            abund_param[list(np.hstack(('sobject_id', sme_abundance, squared_train_feat)))][idx_abund_cols],
+                            abund_param[list(np.hstack(('sobject_id', sme_abundance, squared_train_feat, ['teff_cannon', 'logg_cannon', 'feh_cannon'])))][idx_abund_cols],
                             keys='sobject_id', join_type='inner')
     else:
         param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
-                            abund_param[list(np.hstack(('sobject_id', sme_abundance)))][idx_abund_cols],
+                            abund_param[list(np.hstack(('sobject_id', sme_abundance, ['teff_cannon', 'logg_cannon', 'feh_cannon'])))][idx_abund_cols],
                             keys='sobject_id', join_type='inner')
     idx_spectra_train = np.in1d(galah_param['sobject_id'], param_joined['sobject_id'])
 
