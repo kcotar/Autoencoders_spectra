@@ -3,7 +3,7 @@ import imp, os
 from keras.layers import Input, Dense, Conv1D, MaxPooling1D, Dropout, Flatten, Activation
 from keras.models import Model
 from keras.layers.advanced_activations import PReLU
-from keras import regularizers
+from keras import regularizers, optimizers
 from sklearn.preprocessing import StandardScaler
 from keras.callbacks import EarlyStopping
 from astropy.table import Table, join
@@ -49,6 +49,7 @@ output_reference_plot = True
 use_renormalized_spectra = False
 
 # data training and handling
+read_fe_lines = True
 train_multiple = True
 n_train_multiple = 23
 normalize_abund_values = True
@@ -82,7 +83,7 @@ C_f_3 = 128
 C_k_3 = 7
 C_s_3 = 2
 P_s_3 = 4
-n_dense_nodes = [2500, 800, 1]  # the last layer is output, its size will be determined on the fly
+n_dense_nodes = [2500, 900, 1]  # the last layer is output, its size will be determined on the fly
 
 # --------------------------------------------------------
 # ---------------- Functions -----------------------------
@@ -96,7 +97,9 @@ def custom_error_function(y_true, y_pred):
     return K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=-1)
 
 
-def read_spectra(spectra_file_list, line_list, get_elements=None, read_wvl_offset=0.2):  # in A
+def read_spectra(spectra_file_list, line_list, get_elements=None, read_wvl_offset=0.2, add_fe_lines=False):  # in A
+    if add_fe_lines:
+        get_elements.append('Fe')
     if get_elements is not None:
         idx_list = np.in1d(line_list['Element'], get_elements, assume_unique=False)
         line_list_read = line_list[idx_list]
@@ -178,7 +181,7 @@ if use_renormalized_spectra:
 
 # read spectral data for selected abundance absorption lines
 read_elements = [elem.split('_')[0].capitalize() for elem in sme_abundances_list]
-spectral_data = read_spectra(spectra_file_list, line_list, get_elements=read_elements)
+spectral_data = read_spectra(spectra_file_list, line_list, get_elements=read_elements, add_fe_lines=read_fe_lines)
 n_wvl_total = spectral_data.shape[1]
 
 # somehow handle cols with nan values, delete cols or fill in data
@@ -297,9 +300,11 @@ for sme_abundance in sme_abundances_list:
         plot_suffix += '_squared'
     if use_renormalized_spectra:
         plot_suffix += '_renorm'
-    plot_suffix += '_f'+str(C_f_1)+'-'+str(C_f_2)+'-'+str(C_f_3)
+    # plot_suffix += '_f'+str(C_f_1)+'-'+str(C_f_2)+'-'+str(C_f_3)
     if use_cannon_stellar_param:
         plot_suffix += '_cannon'
+    if read_fe_lines:
+        plot_suffix += '_withfe'
 
     # create a subset of spectra to be train on the sme values
     if squared_components:
@@ -385,10 +390,11 @@ for sme_abundance in sme_abundances_list:
             # ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
 
     abundance_ann = Model(ann_input, ann)
+    selected_optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8)
     if use_all_nonnan_rows:
-        abundance_ann.compile(optimizer='Adam', loss=custom_error_function)
+        abundance_ann.compile(optimizer=selected_optimizer, loss=custom_error_function)
     else:
-        abundance_ann.compile(optimizer='Adam', loss='mse')
+        abundance_ann.compile(optimizer=selected_optimizer, loss='mse')
     abundance_ann.summary()
 
     # define early stopping callback
@@ -467,4 +473,8 @@ for sme_abundance in sme_abundances_list:
         plt.ylim(plot_range)
         plt.savefig(elem_plot + '_ANN_cannon_'+plot_suffix+'.png', dpi=400)
         plt.close()
+
+# aslo save resuts at the end
+fits_out = 'galah_abund_ANN.fits'
+galah_param_complete.write(fits_out)
 
