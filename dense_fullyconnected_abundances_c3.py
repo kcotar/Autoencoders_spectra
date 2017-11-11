@@ -23,19 +23,21 @@ pc_name = gethostname()
 if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
     galah_data_input = '/home/klemen/GALAH_data/'
     imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
+    imp.load_source('helper_functions', '../Carbon-Spectra/spectra_collection_functions.py')
 else:
     galah_data_input = '/data4/cotar/'
 from helper_functions import move_to_dir
+from spectra_collection_functions import read_pkl_spectra, save_pkl_spectra
 
 
 line_file = 'GALAH_Cannon_linelist.csv'
 galah_param_file = 'sobject_iraf_52_reduced.fits'
 # abund_param_file = 'sobject_iraf_cannon2.1.7.fits'
 abund_param_file = 'Cannon3.0.1_Sp_SMEmasks_trainingset.fits'  # can have multiple lines with the same sobject_id - this is on purpose
-spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.csv',
-                     'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF.csv',
-                     'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF.csv',
-                     'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_RF.csv']
+spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.pkl',
+                     'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF.pkl',
+                     'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF.pkl',
+                     'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_RF.pkl']
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -70,20 +72,20 @@ use_regularizer = False
 activation_function = 'linear'  # if set to none defaults to PReLu
 
 # convolution layer 1
-C_f_1 = 256  # number of filters
-C_k_1 = 11  # size of convolution kernel
-C_s_1 = 2  # strides value
+C_f_1 = 64  # number of filters
+C_k_1 = 7  # size of convolution kernel
+C_s_1 = 1  # strides value
 P_s_1 = 4  # size of pooling operator
 # convolution layer 2
-C_f_2 = 256
-C_k_2 = 9
-C_s_2 = 2
-P_s_2 = 4
+C_f_2 = 64
+C_k_2 = 7
+C_s_2 = 1
+P_s_2 = 3
 # convolution layer 3
-C_f_3 = 128
-C_k_3 = 7
-C_s_3 = 2
-P_s_3 = 4
+C_f_3 = 64
+C_k_3 = 5
+C_s_3 = 1
+P_s_3 = 3
 n_dense_nodes = [2500, 900, 1]  # the last layer is output, its size will be determined on the fly
 
 # --------------------------------------------------------
@@ -123,8 +125,9 @@ def read_spectra(spectra_file_list, line_list, get_elements=None, read_wvl_offse
         print len(abund_cols_read)
         # do the actual reading of spectra
         print 'Reading spectra file: ' + spectra_file
-        spectral_data.append(pd.read_csv(galah_data_input + spectra_file, sep=',', header=None,
-                                         na_values='nan', skiprows=None, usecols=abund_cols_read).values)
+        spectral_data.append(read_pkl_spectra(galah_data_input + spectra_file, read_rows=None, read_cols=abund_cols_read))
+        # spectral_data.append(pd.read_csv(galah_data_input + spectra_file, sep=',', header=None,
+        #                                  na_values='nan', skiprows=None, usecols=abund_cols_read).values)
 
     spectral_data = np.hstack(spectral_data)
     print spectral_data.shape
