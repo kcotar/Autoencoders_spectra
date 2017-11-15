@@ -22,22 +22,23 @@ pc_name = gethostname()
 # input data
 if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
     galah_data_input = '/home/klemen/GALAH_data/'
-    imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
-    imp.load_source('helper_functions', '../Carbon-Spectra/spectra_collection_functions.py')
+    imp.load_source('helper_functions', '../Carbon-Spectra/helper_functions.py')
+    imp.load_source('spectra_collection_functions', '../Carbon-Spectra/spectra_collection_functions.py')
 else:
     galah_data_input = '/data4/cotar/'
-from helper_functions import move_to_dir
-from spectra_collection_functions import read_pkl_spectra, save_pkl_spectra
+from helper_functions import *
+from spectra_collection_functions import *
 
 
 line_file = 'GALAH_Cannon_linelist.csv'
-galah_param_file = 'sobject_iraf_52_reduced.fits'
+data_date = '20171111'
+galah_param_file = 'sobject_iraf_52_reduced_'+data_date+'.fits'
 # abund_param_file = 'sobject_iraf_cannon2.1.7.fits'
 abund_param_file = 'Cannon3.0.1_Sp_SMEmasks_trainingset.fits'  # can have multiple lines with the same sobject_id - this is on purpose
-spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.pkl',
-                     'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF.pkl',
-                     'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF.pkl',
-                     'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_RF.pkl']
+spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_'+data_date+'.pkl',
+                     'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_'+data_date+'.pkl',
+                     'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_'+data_date+'.pkl',
+                     'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_'+data_date+'.pkl']
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
