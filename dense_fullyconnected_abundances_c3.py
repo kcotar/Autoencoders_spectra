@@ -22,23 +22,22 @@ pc_name = gethostname()
 # input data
 if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
     galah_data_input = '/home/klemen/GALAH_data/'
-    imp.load_source('helper_functions', '../Carbon-Spectra/helper_functions.py')
+    imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
     imp.load_source('spectra_collection_functions', '../Carbon-Spectra/spectra_collection_functions.py')
 else:
     galah_data_input = '/data4/cotar/'
-from helper_functions import *
-from spectra_collection_functions import *
+from helper_functions import move_to_dir
+from spectra_collection_functions import read_pkl_spectra, save_pkl_spectra
 
 
 line_file = 'GALAH_Cannon_linelist.csv'
-data_date = '20171111'
-galah_param_file = 'sobject_iraf_52_reduced_'+data_date+'.fits'
+galah_param_file = 'sobject_iraf_52_reduced_20171111.fits'
 # abund_param_file = 'sobject_iraf_cannon2.1.7.fits'
-abund_param_file = 'Cannon3.0.1_Sp_SMEmasks_trainingset.fits'  # can have multiple lines with the same sobject_id - this is on purpose
-spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_'+data_date+'.pkl',
-                     'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_'+data_date+'.pkl',
-                     'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_'+data_date+'.pkl',
-                     'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_'+data_date+'.pkl']
+abund_param_file = 'sobject_iraf_iDR2_171103_sme.fits'  # can have multiple lines with the same sobject_id - this is on purpose
+spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.020_lin_renorm_20171111.pkl',
+                     'galah_dr52_ccd2_5640_5880_wvlstep_0.025_lin_renorm_20171111.pkl',
+                     'galah_dr52_ccd3_6475_6745_wvlstep_0.030_lin_renorm_20171111.pkl',
+                     'galah_dr52_ccd4_7700_7895_wvlstep_0.035_lin_renorm_20171111.pkl']
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -55,7 +54,7 @@ use_renormalized_spectra = False
 # data training and handling
 read_fe_lines = False
 train_multiple = True
-n_train_multiple = 29
+n_train_multiple = 1
 normalize_abund_values = True
 
 # data normalization and training set selection
@@ -73,20 +72,20 @@ use_regularizer = False
 activation_function = 'linear'  # if set to none defaults to PReLu
 
 # convolution layer 1
-C_f_1 = 64  # number of filters
-C_k_1 = 7  # size of convolution kernel
-C_s_1 = 1  # strides value
+C_f_1 = 256  # number of filters
+C_k_1 = 13  # size of convolution kernel
+C_s_1 = 2  # strides value
 P_s_1 = 4  # size of pooling operator
 # convolution layer 2
-C_f_2 = 64
-C_k_2 = 7
-C_s_2 = 1
-P_s_2 = 3
+C_f_2 = 128
+C_k_2 = 11
+C_s_2 = 2
+P_s_2 = 4
 # convolution layer 3
-C_f_3 = 64
+C_f_3 = 128
 C_k_3 = 5
 C_s_3 = 1
-P_s_3 = 3
+P_s_3 = 4
 n_dense_nodes = [2500, 900, 1]  # the last layer is output, its size will be determined on the fly
 
 # --------------------------------------------------------
@@ -221,7 +220,7 @@ else:
 # prepare spectral data for the further use in the Keras library
 spectral_data = np.expand_dims(spectral_data, axis=2)
 
-output_dir = 'Cannon3.0_SME'
+output_dir = 'Cannon3.0_SME_20171111'
 if train_multiple:
     output_dir += '_multiple_'+str(n_train_multiple)
 if C_s_1 > 1:
@@ -399,7 +398,7 @@ for sme_abundance in sme_abundances_list:
         ann = Dense(n_nodes, activation=activation_function, name='Dense_'+str(n_nodes),
                     kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
         # add activation function to the layer
-        if n_nodes > 25:
+        if n_nodes > 30:
             # internal fully connected layers in ann network
             if dropout_learning:
                 ann = Dropout(dropout_rate, name='Dropout_'+str(n_nodes))(ann)
@@ -461,9 +460,9 @@ for sme_abundance in sme_abundances_list:
     c_data = np.int64(param_joined['teff_guess'].data)
     c_data_min = np.nanpercentile(c_data, 1)
     c_data_max = np.nanpercentile(c_data, 99)
-    print c_data
-    print c_data_min
-    print c_data_max
+    # print c_data
+    # print c_data_min
+    # print c_data_max
 
     # sme_abundances_plot = np.hstack((sme_abundance, additional_train_feat))
     print 'Plotting graphs'
@@ -522,5 +521,4 @@ for sme_abundance in sme_abundances_list:
 # aslo save resuts at the end
 fits_out = 'galah_abund_ANN_SME3.0.1.fits'
 galah_param_complete.write(fits_out)
-
 
