@@ -5,6 +5,7 @@ from keras.models import Model
 from keras.layers.advanced_activations import PReLU
 from keras.utils import np_utils
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.externals import joblib
 from keras.callbacks import EarlyStopping
 from astropy.table import Table, join
 from socket import gethostname
@@ -67,14 +68,19 @@ activation_function = None  # if set to none defaults to PReLu
 # convolution layer 1
 C_f_1 = 256  # number of filters
 C_k_1 = 11  # size of convolution kernel
-C_s_1 = 1  # strides value
+C_s_1 = 2  # strides value
 P_s_1 = 4  # size of pooling operator
 # convolution layer 2
 C_f_2 = 128
-C_k_2 = 7
-C_s_2 = 1
+C_k_2 = 9
+C_s_2 = 2
 P_s_2 = 4
-n_dense_nodes = [2000, 400, 1]
+# convolution layer 3
+C_f_3 = 128
+C_k_3 = 5
+C_s_3 = 1
+P_s_3 = 4
+n_dense_nodes = [2000, 500, 1]
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -88,11 +94,11 @@ tsne_problematic.filled(0)
 idx_ok = galah_param['red_flag'] == 0
 idx_ok = np.logical_and(idx_ok, galah_param['flag_guess'] == 0)
 idx_ok = np.logical_and(idx_ok, galah_param['sobject_id'] > 140301000000000)
-idx_ok = np.logical_and(idx_ok, galah_param['snr_c2_iraf'] > 25)
+idx_ok = np.logical_and(idx_ok, galah_param['snr_c2_iraf'] > 30)
 sobject_ok_param = galah_param['sobject_id'][idx_ok]
 
 spectral_data = list([])
-for i_band in [3]:
+for i_band in [0, 1, 2, 3]:
     spectra_file = spectra_file_list[i_band]
     # data availability check
     if not os.path.isfile(galah_data_input + spectra_file):
@@ -216,6 +222,9 @@ if C_f_2 > 0:
     ann = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2', strides=C_s_2)(ann)
     ann = PReLU(name='R_2')(ann)
     ann = MaxPooling1D(P_s_2, padding='same', name='P_2')(ann)
+ann = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3', strides=C_s_3)(ann)
+ann = PReLU(name='R_3')(ann)
+encoded_cae = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
 
 # flatter output from convolutional network to the shape useful for fully-connected dense layers
 ann = Flatten(name='Conv_to_Dense')(ann)
@@ -234,7 +243,7 @@ for n_nodes in n_dense_nodes:
         # For a multi-class problem, where you predict 1 of many classes, you use Softmax output.
         # However, in both binary and multi-label classification problems, where multiple classes
         # might be 1 in the output, you use a sigmoid output
-        ann = Dense(n_nodes, activation='softmax', name='Dense_' + str(n_nodes))(ann)
+        ann = Dense(n_nodes, activation='sigmoid', name='Dense_' + str(n_nodes))(ann)
 
 abundance_ann = Model(ann_input, ann)
 abundance_ann.compile(optimizer='rmsprop', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -244,18 +253,27 @@ abundance_ann.summary()
 earlystop = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='auto')
 # fit the NN model
 abundance_ann.fit(spectral_data_train, spectra_class_train_encoded,
-                  epochs=125,
+                  epochs=6,
                   batch_size=128,
                   shuffle=True,
                   callbacks=[earlystop],
-                  validation_split=0.1,
+                  validation_split=0.1,  # percent of the data at the end of the data-set
                   verbose=1)
 
 # evaluate on all spectra
 print 'Predicting abundance values from spectra'
 class_predicted_prob = abundance_ann.predict(spectral_data)
+
+print 'Classes:', 'OK', prob_classes_str
+joblib.dump(class_predicted_prob, 'multiclass_prob_array.pkl')
+# save results of classification
+
 print class_predicted_prob
-print np.argmax(class_predicted_prob, axis=1)
+prob_class_final = np.argmax(class_predicted_prob, axis=1)
+
+# galah_param['class'] = prob_class_final
+# g['sobject_id', 'class'].write('class_problematic_ann.fits')
+
 
 # # add it to the final table
 # galah_param_complete[output_col] = abundance_predicted[:, 0]
