@@ -5,6 +5,7 @@ from keras.models import Model
 from keras.layers.advanced_activations import PReLU
 from keras import regularizers, optimizers
 from sklearn.preprocessing import StandardScaler
+from sklearn.externals import joblib
 from keras.callbacks import EarlyStopping
 from astropy.table import Table, join, unique
 from socket import gethostname
@@ -29,15 +30,19 @@ else:
 from helper_functions import move_to_dir
 from spectra_collection_functions import read_pkl_spectra, save_pkl_spectra
 
-
+date_string = '20171111'
 line_file = 'GALAH_Cannon_linelist.csv'
-galah_param_file = 'sobject_iraf_52_reduced_20171111.fits'
+galah_param_file = 'sobject_iraf_52_reduced_'+date_string+'.fits'
 # abund_param_file = 'sobject_iraf_cannon2.1.7.fits'
 abund_param_file = 'sobject_iraf_iDR2_171103_sme.fits'  # can have multiple lines with the same sobject_id - this is on purpose
-spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.020_lin_renorm_20171111.pkl',
-                     'galah_dr52_ccd2_5640_5880_wvlstep_0.025_lin_renorm_20171111.pkl',
-                     'galah_dr52_ccd3_6475_6745_wvlstep_0.030_lin_renorm_20171111.pkl',
-                     'galah_dr52_ccd4_7700_7895_wvlstep_0.035_lin_renorm_20171111.pkl']
+# spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_'+date_string+'.pkl',
+#                      'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_'+date_string+'.pkl',
+#                      'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_'+date_string+'.pkl',
+#                      'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_'+date_string+'.pkl']
+spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.020_lin_renorm_'+date_string+'.pkl',
+                     'galah_dr52_ccd2_5640_5880_wvlstep_0.025_lin_renorm_'+date_string+'.pkl',
+                     'galah_dr52_ccd3_6475_6745_wvlstep_0.030_lin_renorm_'+date_string+'.pkl',
+                     'galah_dr52_ccd4_7700_7895_wvlstep_0.035_lin_renorm_'+date_string+'.pkl']
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -54,8 +59,9 @@ use_renormalized_spectra = False
 # data training and handling
 read_fe_lines = False
 train_multiple = True
-n_train_multiple = 1
+n_train_multiple = 29
 normalize_abund_values = True
+n_multiple_runs = 15
 
 # data normalization and training set selection
 use_cannon_stellar_param = True
@@ -210,12 +216,20 @@ if global_normalization:
     if not zero_mean_only:
         spectral_data /= global_norm_param[1]
 else:
-    if zero_mean_only:
-        normalizer = StandardScaler(with_mean=True, with_std=False)
+    normalizer_file = 'normalizer_spectra_'+str(n_wvl_total)+'.pkl'
+    if os.path.isfile(normalizer_file):
+        print 'Reading normalization parameters'
+        normalizer = joblib.load(normalizer_file)
     else:
-        normalizer = StandardScaler(with_mean=True, with_std=True)
-    normalizer.fit(spectral_data)
-    spectral_data = normalizer.transform(spectral_data)
+        if zero_mean_only:
+            normalizer = StandardScaler(with_mean=True, with_std=False)
+        else:
+            normalizer = StandardScaler(with_mean=True, with_std=True)
+            normalizer.fit(spectral_data)
+        if save_models:
+            print 'Saving normalization parameters'
+            joblib.dump(normalizer, normalizer_file)
+    spectral_data_norm = normalizer.transform(spectral_data)
 
 # prepare spectral data for the further use in the Keras library
 spectral_data = np.expand_dims(spectral_data, axis=2)
@@ -254,271 +268,272 @@ else:
     additional_train_feat = ['teff_guess', 'feh_guess', 'logg_guess']
 
 print 'SME list:', sme_abundances_list
-for sme_abundance in sme_abundances_list:
-    if train_multiple:
-        print 'Working on multiple abundance: ' + ' '.join(sme_abundance)
-        elements = [sme.split('_')[0] for sme in sme_abundance]
-        plot_suffix = '_'.join(elements)
-        output_col = [elem+'_abund_ann' for elem in elements]
-        if use_all_nonnan_rows:
-            idx_abund_cols = np.isfinite(abund_param[sme_abundance].to_pandas().values).any(axis=1)
-        else:
-            idx_abund_cols = np.isfinite(abund_param[sme_abundance].to_pandas().values).all(axis=1)
-    else:
-        print 'Working on abundance: ' + sme_abundance
-        element = sme_abundance.split('_')[0]
-        plot_suffix = element
-        output_col = [element + '_abund_ann']
-        if use_all_nonnan_rows:
-            # TODO: more elegant way to handle this
-            idx_abund_cols = np.isfinite(abund_param[sme_abundance])
-        else:
-            idx_abund_cols = np.isfinite(abund_param[sme_abundance])
-    n_dense_nodes[-1] = len(sme_abundance) + len(additional_train_feat)  # 3 outputs for stellar physical parameters
-
-    # create squared train components if requested to do so
-    if squared_components:
-        cols_to_square = np.hstack((sme_abundance, additional_train_feat))
-        squared_train_feat = list([])
-        for comb in combinations_with_replacement(cols_to_square, 2):
-            new_label = str(comb[0])+'*'+str(comb[1])
-            print ' Creating new combination: '+new_label
-            new_label_values = abund_param[comb[0]] * abund_param[comb[1]]
-            # check for number of nan values in this new training feature
-            n_values = 1.*len(new_label_values)
-            n_ok = np.sum(np.isfinite(new_label_values))
-            n_nans = (n_values - n_ok)
-            # the new feature must have sufficient number/percent of not nan values to be trained on
-            if n_ok > 300:
-                squared_train_feat.append(new_label)
-                abund_param[new_label] = new_label_values
+for i_run in np.arange(n_multiple_runs)+1:
+    print 'ANN run number:', i_run
+    for sme_abundance in sme_abundances_list:
+        if train_multiple:
+            print 'Working on multiple abundance: ' + ' '.join(sme_abundance)
+            elements = [sme.split('_')[0] for sme in sme_abundance]
+            plot_suffix = '_'.join(elements)
+            output_col = [elem+'_abund_ann' for elem in elements]
+            if use_all_nonnan_rows:
+                idx_abund_cols = np.isfinite(abund_param[sme_abundance].to_pandas().values).any(axis=1)
             else:
-                print ' -> too many nan values (ok values: '+str(n_ok)+')'
-        n_squared = len(squared_train_feat)
-        print ' Total number of squared: '+str(n_squared)
-        n_dense_nodes[-1] += n_squared
-
-    if np.sum(idx_abund_cols) < 300:
-        print ' Not enough train data to do this.'
-        continue
-
-    if use_all_nonnan_rows:
-        plot_suffix += '_with_nan'
-
-    # add some additional suffix describing processing parameters
-    if global_normalization:
-        plot_suffix += '_globalnorm'
-    if zero_mean_only:
-        plot_suffix += '_zeromean'
-    if squared_components:
-        plot_suffix += '_squared'
-    if use_renormalized_spectra:
-        plot_suffix += '_renorm'
-    if use_cannon_stellar_param:
-        plot_suffix += '_smeparam'
-    if read_fe_lines:
-        plot_suffix += '_withfe'
-    # plot_suffix += '_f'+str(C_f_1)+'-'+str(C_f_2)+'-'+str(C_f_3)
-    plot_suffix += '_optim'
-
-    # create a subset of spectra to be train on the sme values
-    if squared_components:
-        param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
-                            abund_param[list(np.hstack(('sobject_id', sme_abundance, sme_params, squared_train_feat)))][idx_abund_cols],
-                            keys='sobject_id', join_type='inner')
-    else:
-        param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
-                            abund_param[list(np.hstack(('sobject_id', sme_abundance, sme_params)))][idx_abund_cols],
-                            keys='sobject_id', join_type='inner')
-    idx_spectra_train = np.in1d(galah_param['sobject_id'], param_joined['sobject_id'])
-    # Data consistency and repetition checks
-    # print 'N param orig:', len(galah_param), 'uniqu', len(np.unique(galah_param['sobject_id']))
-    # print 'N abund orig:', len(abund_param), 'uniqu', len(np.unique(abund_param['sobject_id']))
-    # print 'N param:', len(param_joined), 'uniqu', len(np.unique(param_joined['sobject_id']))
-    # print 'N spect:', np.sum(idx_spectra_train), 'uniqu', len(np.unique(galah_param['sobject_id'][idx_spectra_train]))
-
-    if squared_components:
-        abund_values_train = param_joined[list(np.hstack((sme_abundance, additional_train_feat, squared_train_feat)))].to_pandas().values
-    else:
-        abund_values_train = param_joined[list(np.hstack((sme_abundance, additional_train_feat)))].to_pandas().values
-
-    if normalize_abund_values:
-        # normalizer_outptu = StandardScaler()
-        # abund_values_train = normalizer_outptu.fit_transform(abund_values_train)
-        # another version to deal with NaN/Inf values
-        print 'Normalizing input train parameters'
-        n_train_feat = abund_values_train.shape[1]
-        train_feat_mean = np.zeros(n_train_feat)
-        train_feat_std = np.zeros(n_train_feat)
-        for i_f in range(n_train_feat):
-            train_feat_mean[i_f] = np.nanmean(abund_values_train[:, i_f])
-            train_feat_std[i_f] = np.nanstd(abund_values_train[:, i_f])
-            abund_values_train[:, i_f] = (abund_values_train[:, i_f] - train_feat_mean[i_f])/train_feat_std[i_f]
-
-    n_train_sme = np.sum(idx_spectra_train)
-    print 'Number of train objects: ' + str(n_train_sme)
-    spectral_data_train = spectral_data[idx_spectra_train]
-    # spectral_data_train = np.expand_dims(spectral_data[idx_spectra_train], axis=2)
-
-    # set up regularizer if needed
-    if use_regularizer:
-        # use a combination of l1 and/or l2 regularizer
-        # w_reg = regularizers.l1_l2(1e-5, 1e-5)
-        # a_reg = regularizers.l1_l2(1e-5, 1e-5)
-        w_reg = regularizers.l2(1e-5)
-        a_reg = regularizers.l2(1e-5)
-    else:
-        # default values for Conv1D and Dense layers
-        w_reg = None
-        a_reg = None
-
-    # ann network - fully connected layers
-    ann_input = Input(shape=(spectral_data_train.shape[1], 1), name='Input_'+plot_suffix)
-    ann = ann_input
-
-    ann = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_1', strides=C_s_1,
-                 kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
-    ann = PReLU(name='R_1')(ann)
-    ann = MaxPooling1D(P_s_1, padding='same', name='P_1')(ann)
-    if C_f_2 > 0:
-        ann = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2', strides=C_s_2,
-                     kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
-        ann = PReLU(name='R_2')(ann)
-        ann = MaxPooling1D(P_s_2, padding='same', name='P_2')(ann)
-    ann = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3', strides=C_s_3,
-                 kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
-    ann = PReLU(name='R_3')(ann)
-    encoded_cae = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
-
-    # flatter output from convolutional network to the shape useful for fully-connected dense layers
-    ann = Flatten(name='Conv_to_Dense')(ann)
-
-    # fully connected layers
-    for n_nodes in n_dense_nodes:
-        ann = Dense(n_nodes, activation=activation_function, name='Dense_'+str(n_nodes),
-                    kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
-        # add activation function to the layer
-        if n_nodes > 30:
-            # internal fully connected layers in ann network
-            if dropout_learning:
-                ann = Dropout(dropout_rate, name='Dropout_'+str(n_nodes))(ann)
-            if activation_function is None:
-                ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
+                idx_abund_cols = np.isfinite(abund_param[sme_abundance].to_pandas().values).all(axis=1)
         else:
-            # output layer
-            ann = Activation('linear')(ann)
-            # ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
+            print 'Working on abundance: ' + sme_abundance
+            element = sme_abundance.split('_')[0]
+            plot_suffix = element
+            output_col = [element + '_abund_ann']
+            if use_all_nonnan_rows:
+                # TODO: more elegant way to handle this
+                idx_abund_cols = np.isfinite(abund_param[sme_abundance])
+            else:
+                idx_abund_cols = np.isfinite(abund_param[sme_abundance])
+        n_dense_nodes[-1] = len(sme_abundance) + len(additional_train_feat)  # 3 outputs for stellar physical parameters
 
-    abundance_ann = Model(ann_input, ann)
-    selected_optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8)
-    if use_all_nonnan_rows:
-        abundance_ann.compile(optimizer=selected_optimizer, loss=custom_error_function)
-    else:
-        abundance_ann.compile(optimizer=selected_optimizer, loss='mse')
-    abundance_ann.summary()
+        # create squared train components if requested to do so
+        if squared_components:
+            cols_to_square = np.hstack((sme_abundance, additional_train_feat))
+            squared_train_feat = list([])
+            for comb in combinations_with_replacement(cols_to_square, 2):
+                new_label = str(comb[0])+'*'+str(comb[1])
+                print ' Creating new combination: '+new_label
+                new_label_values = abund_param[comb[0]] * abund_param[comb[1]]
+                # check for number of nan values in this new training feature
+                n_values = 1.*len(new_label_values)
+                n_ok = np.sum(np.isfinite(new_label_values))
+                n_nans = (n_values - n_ok)
+                # the new feature must have sufficient number/percent of not nan values to be trained on
+                if n_ok > 300:
+                    squared_train_feat.append(new_label)
+                    abund_param[new_label] = new_label_values
+                else:
+                    print ' -> too many nan values (ok values: '+str(n_ok)+')'
+            n_squared = len(squared_train_feat)
+            print ' Total number of squared: '+str(n_squared)
+            n_dense_nodes[-1] += n_squared
 
-    # define early stopping callback
-    earlystop = EarlyStopping(monitor='val_loss', patience=6, verbose=1, mode='auto')
-    # fit the NN model
-    abundance_ann.fit(spectral_data_train, abund_values_train,
-                      epochs=125,
-                      batch_size=512,
-                      shuffle=True,
-                      callbacks=[earlystop],
-                      validation_split=0.05,
-                      verbose=2)
+        if np.sum(idx_abund_cols) < 300:
+            print ' Not enough train data to do this.'
+            continue
 
-    # evaluate on all spectra
-    print 'Predicting abundance values from spectra'
-    abundance_predicted = abundance_ann.predict(spectral_data)
-    if normalize_abund_values:
-        print 'Denormalizing output values of features'
-        # abundance_predicted = normalizer_outptu.inverse_transform(abundance_predicted)
-        # another option
-        for i_f in range(n_train_feat):
-            abundance_predicted[:, i_f] = abundance_predicted[:, i_f] * train_feat_std[i_f] + train_feat_mean[i_f]
+        if use_all_nonnan_rows:
+            plot_suffix += '_with_nan'
 
-    # add parameters to the output
-    for s_p in additional_train_feat:
-        output_col.append(s_p.split('_')[0]+'_ann')
-    # add abundance results to the final table
-    for i_o in range(len(output_col)):
-        galah_param_complete[output_col[i_o]] = abundance_predicted[:, i_o]
+        # add some additional suffix describing processing parameters
+        if global_normalization:
+            plot_suffix += '_globalnorm'
+        if zero_mean_only:
+            plot_suffix += '_zeromean'
+        if squared_components:
+            plot_suffix += '_squared'
+        if use_renormalized_spectra:
+            plot_suffix += '_renorm'
+        if use_cannon_stellar_param:
+            plot_suffix += '_smeparam'
+        if read_fe_lines:
+            plot_suffix += '_withfe'
+        # plot_suffix += '_f'+str(C_f_1)+'-'+str(C_f_2)+'-'+str(C_f_3)
+        plot_suffix += '_optim'
 
-    if activation_function is None:
-        plot_suffix += '_prelu'
-    else:
-        plot_suffix += '_'+activation_function
+        # create a subset of spectra to be train on the sme values
+        if squared_components:
+            param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
+                                abund_param[list(np.hstack(('sobject_id', sme_abundance, sme_params, squared_train_feat)))][idx_abund_cols],
+                                keys='sobject_id', join_type='inner')
+        else:
+            param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
+                                abund_param[list(np.hstack(('sobject_id', sme_abundance, sme_params)))][idx_abund_cols],
+                                keys='sobject_id', join_type='inner')
+        idx_spectra_train = np.in1d(galah_param['sobject_id'], param_joined['sobject_id'])
+        # Data consistency and repetition checks
+        # print 'N param orig:', len(galah_param), 'uniqu', len(np.unique(galah_param['sobject_id']))
+        # print 'N abund orig:', len(abund_param), 'uniqu', len(np.unique(abund_param['sobject_id']))
+        # print 'N param:', len(param_joined), 'uniqu', len(np.unique(param_joined['sobject_id']))
+        # print 'N spect:', np.sum(idx_spectra_train), 'uniqu', len(np.unique(galah_param['sobject_id'][idx_spectra_train]))
 
-    # scatter plot of results to the reference cannon and sme values
-    if train_multiple:
-        sme_abundances_plot = sme_abundance
-    else:
-        sme_abundances_plot = [sme_abundance]
+        if squared_components:
+            abund_values_train = param_joined[list(np.hstack((sme_abundance, additional_train_feat, squared_train_feat)))].to_pandas().values
+        else:
+            abund_values_train = param_joined[list(np.hstack((sme_abundance, additional_train_feat)))].to_pandas().values
 
-    # determine a feature to be used a colour of points
-    c_data = np.int64(param_joined['teff_guess'].data)
-    c_data_min = np.nanpercentile(c_data, 1)
-    c_data_max = np.nanpercentile(c_data, 99)
-    # print c_data
-    # print c_data_min
-    # print c_data_max
+        if normalize_abund_values:
+            abund_normalizer_file = 'normalizer_abund_'+'_'.join(elements)+'.pkl'
+            if os.path.isfile(normalizer_file):
+                print 'Reading normalization parameters'
+                train_feat_mean, train_feat_std = joblib.load(normalizer_file)
+            else:
+                print 'Normalizing input train parameters'
+                n_train_feat = abund_values_train.shape[1]
+                train_feat_mean = np.zeros(n_train_feat)
+                train_feat_std = np.zeros(n_train_feat)
+                joblib.dump([train_feat_mean, train_feat_std], abund_normalizer_file)
 
-    # sme_abundances_plot = np.hstack((sme_abundance, additional_train_feat))
-    print 'Plotting graphs'
-    for plot_abund in sme_abundances_plot:
-        print ' plotting attribute - ' + plot_abund
-        elem_plot = plot_abund.split('_')[0]
-        # determine number of lines used for this element
-        n_lines_element = np.sum(line_list['Element'] == elem_plot.capitalize())
-        graphs_title = elem_plot.capitalize() + ' - SME train objects: ' + str(n_train_sme) + ' (lines: ' + str(n_lines_element) + ') - RMSE: '+str(rmse(galah_param_complete[elem_plot+'_abund_sme'], galah_param_complete[elem_plot+'_abund_ann']))
-        plot_range = (np.nanpercentile(abund_param[plot_abund], 1), np.nanpercentile(abund_param[plot_abund], 99))
-        # first scatter graph - train points
-        plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
-        plt.scatter(galah_param_complete[elem_plot+'_abund_sme'], galah_param_complete[elem_plot+'_abund_ann'],
-                    lw=0, s=0.4, c='black') #c=c_data, cmap='jet', vmin=c_data_min, vmax=c_data_max)
-        plt.title(graphs_title)
-        plt.xlabel('SME reference value')
-        plt.ylabel('ANN computed value')
-        plt.xlim(plot_range)
-        plt.ylim(plot_range)
-        plt.savefig(elem_plot+'_ANN_sme_'+plot_suffix+'.png', dpi=400)
-        plt.close()
+            for i_f in range(n_train_feat):
+                train_feat_mean[i_f] = np.nanmean(abund_values_train[:, i_f])
+                train_feat_std[i_f] = np.nanstd(abund_values_train[:, i_f])
+                abund_values_train[:, i_f] = (abund_values_train[:, i_f] - train_feat_mean[i_f])/train_feat_std[i_f]
 
-    for plot_param in sme_params:
-        print ' plotting parameter - ' + plot_param
-        param_plot = plot_param.split('_')[0]
-        # determine number of lines used for this element
-        graphs_title = 'SME parameter '+param_plot
-        plot_range = (np.nanpercentile(abund_param[plot_param], 1), np.nanpercentile(abund_param[plot_param], 99))
-        # first scatter graph - train points
-        plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
-        plt.scatter(galah_param_complete[param_plot+'_sme'], galah_param_complete[param_plot+'_ann'],
-                    lw=0, s=0.4, c='black') #c=c_data, cmap='jet', vmin=c_data_min, vmax=c_data_max)
-        plt.title(graphs_title)
-        plt.xlabel('SME reference value')
-        plt.ylabel('ANN computed value')
-        plt.xlim(plot_range)
-        plt.ylim(plot_range)
-        plt.savefig(param_plot+'_ANN_sme_'+plot_suffix+'.png', dpi=400)
-        plt.close()
+        n_train_sme = np.sum(idx_spectra_train)
+        print 'Number of train objects: ' + str(n_train_sme)
+        spectral_data_train = spectral_data[idx_spectra_train]
+        # spectral_data_train = np.expand_dims(spectral_data[idx_spectra_train], axis=2)
 
-        # second graph - cannon points
-"""
-        graphs_title = elem_plot.capitalize() + ' - SME train objects: ' + str(n_train_sme) + ' (lines: ' + str(n_lines_element) + ') - RMSE: '+str(rmse(galah_param_complete[elem_plot+'_abund_cannon'], galah_param_complete[elem_plot+'_abund_ann']))
-        plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
-        plt.scatter(galah_param_complete[elem_plot + '_abund_cannon'], galah_param_complete[elem_plot+'_abund_ann'],
-                    lw=0, s=0.4, c='black') #c=c_data, cmap='jet', vmin=c_data_min, vmax=c_data_max)
-        plt.title(graphs_title)
-        plt.xlabel('CANNON reference value')
-        plt.ylabel('ANN computed value')
-        plt.xlim(plot_range)
-        plt.ylim(plot_range)
-        plt.savefig(elem_plot + '_ANN_cannon_'+plot_suffix+'.png', dpi=400)
-        plt.close()
-"""
+        # set up regularizer if needed
+        if use_regularizer:
+            # use a combination of l1 and/or l2 regularizer
+            # w_reg = regularizers.l1_l2(1e-5, 1e-5)
+            # a_reg = regularizers.l1_l2(1e-5, 1e-5)
+            w_reg = regularizers.l2(1e-5)
+            a_reg = regularizers.l2(1e-5)
+        else:
+            # default values for Conv1D and Dense layers
+            w_reg = None
+            a_reg = None
 
-# aslo save resuts at the end
-fits_out = 'galah_abund_ANN_SME3.0.1.fits'
-galah_param_complete.write(fits_out)
+        # ann network - fully connected layers
+        ann_input = Input(shape=(spectral_data_train.shape[1], 1), name='Input_'+plot_suffix)
+        ann = ann_input
+
+        ann = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_1', strides=C_s_1,
+                     kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
+        ann = PReLU(name='R_1')(ann)
+        ann = MaxPooling1D(P_s_1, padding='same', name='P_1')(ann)
+        if C_f_2 > 0:
+            ann = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2', strides=C_s_2,
+                         kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
+            ann = PReLU(name='R_2')(ann)
+            ann = MaxPooling1D(P_s_2, padding='same', name='P_2')(ann)
+        ann = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3', strides=C_s_3,
+                     kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
+        ann = PReLU(name='R_3')(ann)
+        encoded_cae = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
+
+        # flatter output from convolutional network to the shape useful for fully-connected dense layers
+        ann = Flatten(name='Conv_to_Dense')(ann)
+
+        # fully connected layers
+        for n_nodes in n_dense_nodes:
+            ann = Dense(n_nodes, activation=activation_function, name='Dense_'+str(n_nodes),
+                        kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
+            # add activation function to the layer
+            if n_nodes > 30:
+                # internal fully connected layers in ann network
+                if dropout_learning:
+                    ann = Dropout(dropout_rate, name='Dropout_'+str(n_nodes))(ann)
+                if activation_function is None:
+                    ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
+            else:
+                # output layer
+                ann = Activation('linear')(ann)
+                # ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
+
+        abundance_ann = Model(ann_input, ann)
+        selected_optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8)
+        if use_all_nonnan_rows:
+            abundance_ann.compile(optimizer=selected_optimizer, loss=custom_error_function)
+        else:
+            abundance_ann.compile(optimizer=selected_optimizer, loss='mse')
+        abundance_ann.summary()
+
+        metwork_weights_file = 'ann_network_run{:02.0f}.h5'.format(i_run)
+        if os.path.isfile(metwork_weights_file):
+            print 'Reading NN weighs - CAE'
+            abundance_ann.load_weights(metwork_weights_file, by_name=True)
+        else:
+            # define early stopping callback
+            earlystop = EarlyStopping(monitor='val_loss', patience=6, verbose=1, mode='auto')
+            # fit the NN model
+            abundance_ann.fit(spectral_data_train, abund_values_train,
+                              epochs=125,
+                              batch_size=512,
+                              shuffle=True,
+                              callbacks=[earlystop],
+                              validation_split=0.05,
+                              verbose=2)
+            if save_models:
+                print 'Saving NN weighs - CAE'
+                abundance_ann.save_weights(metwork_weights_file, overwrite=True)
+
+        # evaluate on all spectra
+        print 'Predicting abundance values from spectra'
+        abundance_predicted = abundance_ann.predict(spectral_data)
+        if normalize_abund_values:
+            print 'Denormalizing output values of features'
+            # abundance_predicted = normalizer_outptu.inverse_transform(abundance_predicted)
+            # another option
+            for i_f in range(n_train_feat):
+                abundance_predicted[:, i_f] = abundance_predicted[:, i_f] * train_feat_std[i_f] + train_feat_mean[i_f]
+
+        # add parameters to the output
+        for s_p in additional_train_feat:
+            output_col.append(s_p.split('_')[0]+'_ann')
+        # add abundance results to the final table
+        for i_o in range(len(output_col)):
+            galah_param_complete[output_col[i_o]] = abundance_predicted[:, i_o]
+
+        if activation_function is None:
+            plot_suffix += '_prelu'
+        else:
+            plot_suffix += '_'+activation_function
+
+        plot_suffix += '_run{:02.0f}'.format(i_run)
+
+        # scatter plot of results to the reference cannon and sme values
+        if train_multiple:
+            sme_abundances_plot = sme_abundance
+        else:
+            sme_abundances_plot = [sme_abundance]
+
+        # determine a feature to be used a colour of points
+        c_data = np.int64(param_joined['teff_guess'].data)
+        c_data_min = np.nanpercentile(c_data, 1)
+        c_data_max = np.nanpercentile(c_data, 99)
+        # print c_data
+        # print c_data_min
+        # print c_data_max
+
+        # sme_abundances_plot = np.hstack((sme_abundance, additional_train_feat))
+        print 'Plotting graphs'
+        for plot_abund in sme_abundances_plot:
+            print ' plotting attribute - ' + plot_abund
+            elem_plot = plot_abund.split('_')[0]
+            # determine number of lines used for this element
+            n_lines_element = np.sum(line_list['Element'] == elem_plot.capitalize())
+            graphs_title = elem_plot.capitalize() + ' - SME train objects: ' + str(n_train_sme) + ' (lines: ' + str(n_lines_element) + ') - RMSE: '+str(rmse(galah_param_complete[elem_plot+'_abund_sme'], galah_param_complete[elem_plot+'_abund_ann']))
+            plot_range = (np.nanpercentile(abund_param[plot_abund], 1), np.nanpercentile(abund_param[plot_abund], 99))
+            # first scatter graph - train points
+            plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
+            plt.scatter(galah_param_complete[elem_plot+'_abund_sme'], galah_param_complete[elem_plot+'_abund_ann'],
+                        lw=0, s=0.4, c='black') #c=c_data, cmap='jet', vmin=c_data_min, vmax=c_data_max)
+            plt.title(graphs_title)
+            plt.xlabel('SME reference value')
+            plt.ylabel('ANN computed value')
+            plt.xlim(plot_range)
+            plt.ylim(plot_range)
+            plt.savefig(elem_plot+'_ANN_sme_'+plot_suffix+'.png', dpi=400)
+            plt.close()
+
+        for plot_param in sme_params:
+            print ' plotting parameter - ' + plot_param
+            param_plot = plot_param.split('_')[0]
+            # determine number of lines used for this element
+            graphs_title = 'SME parameter '+param_plot
+            plot_range = (np.nanpercentile(abund_param[plot_param], 1), np.nanpercentile(abund_param[plot_param], 99))
+            # first scatter graph - train points
+            plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
+            plt.scatter(galah_param_complete[param_plot+'_sme'], galah_param_complete[param_plot+'_ann'],
+                        lw=0, s=0.4, c='black') #c=c_data, cmap='jet', vmin=c_data_min, vmax=c_data_max)
+            plt.title(graphs_title)
+            plt.xlabel('SME reference value')
+            plt.ylabel('ANN computed value')
+            plt.xlim(plot_range)
+            plt.ylim(plot_range)
+            plt.savefig(param_plot+'_ANN_sme_'+plot_suffix+'.png', dpi=400)
+            plt.close()
+
+    # aslo save resuts at the end
+    fits_out = 'galah_abund_ANN_SME3.0.1_run{:02.0f}.fits'.format(i_run)
+    galah_param_complete.write(fits_out)
 

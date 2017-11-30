@@ -159,7 +159,7 @@ move_to_dir('Classifier_problematic')
 prob_classes_str = np.unique(tsne_problematic['published_reduced_class_proj1'])  # get all unique classes
 prob_classes_str = [c for c in prob_classes_str if c != '0']
 prob_classes_num = np.int16(np.arange(0, len(prob_classes_str))+1)  # set a numerical value for every wanted class
-n_dense_nodes[-1] = len(prob_classes_str) + 1  # +1 for "non-problematic" data
+n_dense_nodes[-1] = len(prob_classes_str) #+ 1  # +1 for "non-problematic" data
 
 # construct and fill arrays that will be used as a trainig set
 idx_spectra_class_train = np.ndarray(len(galah_param), dtype=np.bool)
@@ -184,6 +184,7 @@ for i_c in range(len(prob_classes_str)):
     idx_spectra_class_train = np.logical_or(idx_spectra_class_train, idx_spectra_prob)
     spectra_class_train[idx_spectra_prob] = prob_classes_num[i_c]
 
+"""
 n_prob_train_total = np.sum(idx_spectra_class_train)
 # the next best thing to select kind of non-problematic spectra
 # they are not in tnse class and are from dr5.1 release (as we do not have complete dr5.2 classification info yet)
@@ -198,6 +199,7 @@ if n_ok > n_prob_train_total:
 # mark ok selection in train array
 idx_subject_ok = np.in1d(galah_param['sobject_id'], sobject_ok)
 idx_spectra_class_train = np.logical_or(idx_spectra_class_train, idx_subject_ok)
+"""
 
 # encode class values as integers
 print 'Encoding labels'
@@ -253,7 +255,7 @@ abundance_ann.summary()
 earlystop = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='auto')
 # fit the NN model
 abundance_ann.fit(spectral_data_train, spectra_class_train_encoded,
-                  epochs=6,
+                  epochs=4,
                   batch_size=128,
                   shuffle=True,
                   callbacks=[earlystop],
@@ -261,11 +263,11 @@ abundance_ann.fit(spectral_data_train, spectra_class_train_encoded,
                   verbose=1)
 
 # evaluate on all spectra
-print 'Predicting abundance values from spectra'
+print 'Predicting class values from all spectra'
 class_predicted_prob = abundance_ann.predict(spectral_data)
 
 print 'Classes:', 'OK', prob_classes_str
-joblib.dump(class_predicted_prob, 'multiclass_prob_array.pkl')
+joblib.dump(class_predicted_prob, 'multiclass_prob_array_withoutok.pkl')
 # save results of classification
 
 print class_predicted_prob
