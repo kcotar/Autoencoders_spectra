@@ -19,17 +19,20 @@ else:
 
 
 cannon_data = Table.read(galah_data_input+'sobject_iraf_iDR2_171103_cannon.fits')
-ann_data = Table.read(galah_data_input+'galah_abund_ANN_SME3.0.1_res_renorm.fits')
+ann_data = Table.read(galah_data_input+'galah_abund_ANN_SME3.0.1_stacked_median_ext0.fits')
+cannon_data = cannon_data.filled(-1)
+ann_data = ann_data.filled(-1)
 
 cannon_abundances_list = [col for col in cannon_data.colnames if '_abund_cannon' in col and 'e_' not in col and 'flag_' not in col and len(col.split('_'))<4]
 ann_abundances_list = [col for col in ann_data.colnames if '_abund_ann' in col and 'e_' not in col and 'flag_' not in col]
 
 joined_data = join(ann_data, cannon_data, join_type='inner')
 
-os.chdir('Cannon_vs_ann-res-renorm_')
+os.chdir('Cannon_vs_ann-res-renorm-stacked_ext0')
 for col in ann_abundances_list:
     elem = col.split('_')[0]
     print elem
+    # idx_ok = joined_data['flag_'+elem+'_abund_cannon'] < 4
     idx_ok = np.logical_or(joined_data['flag_'+elem+'_abund_cannon'] == 2, joined_data['flag_'+elem+'_abund_cannon'] == 0)
     perc_ok = 100.*np.sum(idx_ok)/len(joined_data)
     print ' Percent ok', perc_ok

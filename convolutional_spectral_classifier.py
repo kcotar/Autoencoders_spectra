@@ -21,7 +21,7 @@ pc_name = gethostname()
 
 # input data
 if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
-    galah_data_input = '/home/klemen/GALAH_data/'
+    galah_data_input = '/home/klemen/data4_mount/'
     imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
     imp.load_source('spectra_collection_functions', '../Carbon-Spectra/spectra_collection_functions.py')
 else:
@@ -29,10 +29,14 @@ else:
 from helper_functions import move_to_dir
 from spectra_collection_functions import read_pkl_spectra, save_pkl_spectra
 
+# tsne_problematic_file ='tsne_class_1_0.csv'  # dr51 classes
+# tsne_prob_col = 'published_reduced_class_proj1'
+tsne_problematic_file ='dr52_class_joined.csv'  # larger set of dr52 stars
+tsne_prob_col = 'dr52_class_reduced'
+
 date_string = '20171111'
-tsne_problematic_file ='tsne_class_1_0.csv'
 galah_param_file = 'sobject_iraf_52_reduced_'+date_string+'.fits'
-cannon3_file = 'sobject_iraf_iDR2_171103_cannon.fits'
+# cannon3_file = 'sobject_iraf_iDR2_171103_cannon.fits'
 cannon1_file = 'sobject_iraf_cannon_1.2.fits'
 
 # # renormed and oversampled set of spectra
@@ -41,13 +45,18 @@ cannon1_file = 'sobject_iraf_cannon_1.2.fits'
 #                      'galah_dr52_ccd3_6475_6745_wvlstep_0.030_lin_renorm_'+date_string+'.pkl',
 #                      'galah_dr52_ccd4_7700_7895_wvlstep_0.035_lin_renorm_'+date_string+'.pkl']
 # original and resampled set of spectra
-spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_'+date_string+'.pkl',
-                     'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_'+date_string+'.pkl',
-                     'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_'+date_string+'.pkl',
-                     'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_'+date_string+'.pkl']
+# spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_'+date_string+'.pkl',
+#                      'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_'+date_string+'.pkl',
+#                      'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_'+date_string+'.pkl',
+#                      'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_'+date_string+'.pkl']
+spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.020_ext0_renorm_'+date_string+'.pkl',
+                     'galah_dr52_ccd2_5640_5880_wvlstep_0.025_ext0_renorm_'+date_string+'.pkl',
+                     'galah_dr52_ccd3_6475_6745_wvlstep_0.030_ext0_renorm_'+date_string+'.pkl',
+                     'galah_dr52_ccd4_7700_7895_wvlstep_0.035_ext0_renorm_'+date_string+'.pkl']
 
 # reading settings
-spectra_get_cols = [3500, 3500, 3500, 2000]
+# spectra_get_cols = [3500, 3500, 3500, 2000]  # normal sampling
+spectra_get_cols = [5500, 5500, 5500, 3000]  # resampled sampling
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -60,9 +69,8 @@ output_plots = True
 limited_rows = False
 snr_cut = False
 normalize_spectra = True
-normalize_abund_values = True
 dropout_learning = True
-dropout_rate = 0.2
+dropout_rate = 0.1
 activation_function = None  # if set to none defaults to PReLu
 
 # convolution layer 1
@@ -78,9 +86,9 @@ P_s_2 = 4
 # convolution layer 3
 C_f_3 = 128
 C_k_3 = 5
-C_s_3 = 1
+C_s_3 = 2
 P_s_3 = 4
-n_dense_nodes = [2000, 500, 1]
+n_dense_nodes = [1500, 500, 1]
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -149,17 +157,17 @@ if normalize_spectra:
 # prepare spectral data for the further use in the Keras library
 spectral_data = np.expand_dims(spectral_data, axis=2)  # not needed in this case, only convolution needs 3D arrays
 
-move_to_dir('Classifier_problematic')
+move_to_dir('Classifier_problematic_dr52')
 
 # --------------------------------------------------------
 # ---------------- Train ANN on a train (sub)set of Gregor's published classes
 # --------------------------------------------------------
 # determine training set
 # prob_classes = ['binary']
-prob_classes_str = np.unique(tsne_problematic['published_reduced_class_proj1'])  # get all unique classes
+prob_classes_str = np.unique(tsne_problematic[tsne_prob_col])  # get all unique classes
 prob_classes_str = [c for c in prob_classes_str if c != '0']
 prob_classes_num = np.int16(np.arange(0, len(prob_classes_str))+1)  # set a numerical value for every wanted class
-n_dense_nodes[-1] = len(prob_classes_str) #+ 1  # +1 for "non-problematic" data
+n_dense_nodes[-1] = len(prob_classes_str) + 1  # +1 for "non-problematic" data
 
 # construct and fill arrays that will be used as a trainig set
 idx_spectra_class_train = np.ndarray(len(galah_param), dtype=np.bool)
@@ -167,10 +175,10 @@ idx_spectra_class_train.fill(False)  # set that none of the spectra is used for 
 spectra_class_train = np.ndarray(len(galah_param), dtype=np.int16)
 spectra_class_train.fill(0)  # set all spectra to OK == class 0
 
-N_MAX_PER_CLASS = 3000
+N_MAX_PER_CLASS = 5000
 for i_c in range(len(prob_classes_str)):
     print 'Working on problematic class:', prob_classes_str[i_c]
-    sobject_prob = tsne_problematic[tsne_problematic['published_reduced_class_proj1'] == prob_classes_str[i_c]]['sobject_id']
+    sobject_prob = tsne_problematic[tsne_problematic['dr52_class_reduced'] == prob_classes_str[i_c]]['sobject_id']
     idx_spectra_prob = np.in1d(galah_param['sobject_id'], sobject_prob)
     n_prob = np.sum(idx_spectra_prob)
     if n_prob > N_MAX_PER_CLASS:
@@ -184,7 +192,7 @@ for i_c in range(len(prob_classes_str)):
     idx_spectra_class_train = np.logical_or(idx_spectra_class_train, idx_spectra_prob)
     spectra_class_train[idx_spectra_prob] = prob_classes_num[i_c]
 
-"""
+
 n_prob_train_total = np.sum(idx_spectra_class_train)
 # the next best thing to select kind of non-problematic spectra
 # they are not in tnse class and are from dr5.1 release (as we do not have complete dr5.2 classification info yet)
@@ -199,7 +207,7 @@ if n_ok > n_prob_train_total:
 # mark ok selection in train array
 idx_subject_ok = np.in1d(galah_param['sobject_id'], sobject_ok)
 idx_spectra_class_train = np.logical_or(idx_spectra_class_train, idx_subject_ok)
-"""
+
 
 # encode class values as integers
 print 'Encoding labels'
@@ -213,101 +221,69 @@ n_train_class = np.sum(idx_spectra_class_train)
 print 'Number of train objects: ' + str(n_train_class)
 spectral_data_train = spectral_data[idx_spectra_class_train]
 
-# ann network - fully connected layers
-ann_input = Input(shape=(spectral_data_train.shape[1], 1), name='Input_spectra')
-ann = ann_input
+for f_width in range(1, 6, 1):
+    # determine odd sized filter
+    C_k_1 = 4*f_width + 1
+    C_k_2 = 3*f_width + 1
+    C_k_3 = 2*f_width + 1
 
-ann = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_1', strides=C_s_1)(ann)
-ann = PReLU(name='R_1')(ann)
-ann = MaxPooling1D(P_s_1, padding='same', name='P_1')(ann)
-if C_f_2 > 0:
-    ann = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2', strides=C_s_2)(ann)
-    ann = PReLU(name='R_2')(ann)
-    ann = MaxPooling1D(P_s_2, padding='same', name='P_2')(ann)
-ann = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3', strides=C_s_3)(ann)
-ann = PReLU(name='R_3')(ann)
-encoded_cae = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
+    # ann network - fully connected layers
+    ann_input = Input(shape=(spectral_data_train.shape[1], 1), name='Input_spectra')
+    ann = ann_input
 
-# flatter output from convolutional network to the shape useful for fully-connected dense layers
-ann = Flatten(name='Conv_to_Dense')(ann)
+    ann = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_1', strides=C_s_1)(ann)
+    ann = PReLU(name='R_1')(ann)
+    ann = MaxPooling1D(P_s_1, padding='same', name='P_1')(ann)
+    if C_f_2 > 0:
+        ann = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2', strides=C_s_2)(ann)
+        ann = PReLU(name='R_2')(ann)
+        ann = MaxPooling1D(P_s_2, padding='same', name='P_2')(ann)
+    ann = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3', strides=C_s_3)(ann)
+    ann = PReLU(name='R_3')(ann)
+    encoded_cae = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
 
-# fully connected layers
-for n_nodes in n_dense_nodes:
-    if n_nodes > 30:
-        ann = Dense(n_nodes, activation=activation_function, name='Dense_'+str(n_nodes))(ann)
-        if dropout_learning:
-            ann = Dropout(dropout_rate, name='Dropout_' + str(n_nodes))(ann)
-        if activation_function is None:
-            ann = PReLU(name='PReLU_'+str(n_nodes))(ann)
-    else:
-        # final layer should produce classifcation: sigmoid(binary) or softmax(multiclass)
-        # NOTE ON FINAL ACTIVATION FUNCTION SELECTION !!!!!!!!!!!!!!
-        # For a multi-class problem, where you predict 1 of many classes, you use Softmax output.
-        # However, in both binary and multi-label classification problems, where multiple classes
-        # might be 1 in the output, you use a sigmoid output
-        ann = Dense(n_nodes, activation='sigmoid', name='Dense_' + str(n_nodes))(ann)
+    # flatter output from convolutional network to the shape useful for fully-connected dense layers
+    ann = Flatten(name='Conv_to_Dense')(ann)
 
-abundance_ann = Model(ann_input, ann)
-abundance_ann.compile(optimizer='rmsprop', loss='categorical_crossentropy', metrics=['accuracy'])
-abundance_ann.summary()
+    # fully connected layers
+    for n_nodes in n_dense_nodes:
+        if n_nodes > 30:
+            ann = Dense(n_nodes, activation=activation_function, name='Dense_'+str(n_nodes))(ann)
+            if dropout_learning:
+                ann = Dropout(dropout_rate, name='Dropout_' + str(n_nodes))(ann)
+            if activation_function is None:
+                ann = PReLU(name='PReLU_'+str(n_nodes))(ann)
+        else:
+            # final layer should produce classifcation: sigmoid(binary) or softmax(multiclass)
+            # NOTE ON FINAL ACTIVATION FUNCTION SELECTION !!!!!!!!!!!!!!
+            # For a multi-class problem, where you predict 1 of many classes, you use Softmax output.
+            # However, in both binary and multi-label classification problems, where multiple classes
+            # might be 1 in the output, you use a sigmoid output
+            ann = Dense(n_nodes, activation='sigmoid', name='Dense_' + str(n_nodes))(ann)
 
-# define early stopping callback
-earlystop = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='auto')
-# fit the NN model
-abundance_ann.fit(spectral_data_train, spectra_class_train_encoded,
-                  epochs=4,
-                  batch_size=128,
-                  shuffle=True,
-                  callbacks=[earlystop],
-                  validation_split=0.1,  # percent of the data at the end of the data-set
-                  verbose=1)
+    abundance_ann = Model(ann_input, ann)
+    abundance_ann.compile(optimizer='rmsprop', loss='categorical_crossentropy', metrics=['accuracy'])
+    abundance_ann.summary()
 
-# evaluate on all spectra
-print 'Predicting class values from all spectra'
-class_predicted_prob = abundance_ann.predict(spectral_data)
+    # define early stopping callback
+    earlystop = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='auto')
+    # fit the NN model
+    abundance_ann.fit(spectral_data_train, spectra_class_train_encoded,
+                      epochs=8,
+                      batch_size=128,
+                      shuffle=True,
+                      callbacks=[earlystop],
+                      validation_split=0.2,  # percent of the data at the end of the data-set
+                      verbose=1)
 
-print 'Classes:', 'OK', prob_classes_str
-joblib.dump(class_predicted_prob, 'multiclass_prob_array_withoutok.pkl')
-# save results of classification
+    # evaluate on all spectra
+    print 'Predicting class values from all spectra'
+    class_predicted_prob = abundance_ann.predict(spectral_data)
 
-print class_predicted_prob
-prob_class_final = np.argmax(class_predicted_prob, axis=1)
+    print 'Classes:', 'OK', prob_classes_str
+    joblib.dump(class_predicted_prob, 'multiclass_prob_array_withok_'+str(f_width)+'.pkl')
+    # save results of classification
 
-# galah_param['class'] = prob_class_final
-# g['sobject_id', 'class'].write('class_problematic_ann.fits')
-
-
-# # add it to the final table
-# galah_param_complete[output_col] = abundance_predicted[:, 0]
-#
-# if activation_function is None:
-#     plot_suffix = 'prelu'
-# else:
-#     plot_suffix = activation_function
-
-# # scatter plot of results to the reference cannon and sme values
-# print 'Plotting graphs'
-# graphs_title = element.capitalize() + ' - number of SME learning objects is ' + str(n_train_sme)
-# plot_range = (np.nanmin(abund_param[sme_abundance]), np.nanmax(abund_param[sme_abundance]))
-# # first scatter graph - train points
-# plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
-# plt.scatter(galah_param_complete[element+'_abund_sme'], galah_param_complete[output_col],
-#             lw=0, s=0.1, alpha=0.4, c='black')
-# plt.title(graphs_title)
-# plt.xlabel('SME reference value')
-# plt.ylabel('ANN computed value')
-# plt.xlim(plot_range)
-# plt.ylim(plot_range)
-# plt.savefig(element+'_ANN_sme_'+plot_suffix+'.png', dpi=400)
-# plt.close()
-# # second graph - cannon points
-# plt.scatter(galah_param_complete[element + '_abund_cannon'], galah_param_complete[output_col],
-#             lw=0, s=0.1, alpha=0.2, c='black')
-# plt.title(graphs_title)
-# plt.xlabel('CANNON reference value')
-# plt.ylabel('ANN computed value')
-# plt.xlim(plot_range)
-# plt.ylim(plot_range)
-# plt.savefig(element + '_ANN_cannon_'+plot_suffix+'.png', dpi=400)
-# plt.close()
+    print class_predicted_prob
+    prob_class_final = np.argmax(class_predicted_prob, axis=1)
 

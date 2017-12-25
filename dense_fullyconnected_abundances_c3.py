@@ -22,7 +22,7 @@ pc_name = gethostname()
 
 # input data
 if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
-    galah_data_input = '/home/klemen/GALAH_data/'
+    galah_data_input = '/home/klemen/data4_mount/'
     imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
     imp.load_source('spectra_collection_functions', '../Carbon-Spectra/spectra_collection_functions.py')
 else:
@@ -31,7 +31,7 @@ from helper_functions import move_to_dir
 from spectra_collection_functions import read_pkl_spectra, save_pkl_spectra
 
 date_string = '20171111'
-line_file = 'GALAH_Cannon_linelist.csv'
+line_file = 'GALAH_Cannon_linelist_newer.csv'
 galah_param_file = 'sobject_iraf_52_reduced_'+date_string+'.fits'
 # abund_param_file = 'sobject_iraf_cannon2.1.7.fits'
 abund_param_file = 'sobject_iraf_iDR2_171103_sme.fits'  # can have multiple lines with the same sobject_id - this is on purpose
@@ -39,10 +39,14 @@ abund_param_file = 'sobject_iraf_iDR2_171103_sme.fits'  # can have multiple line
 #                      'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_'+date_string+'.pkl',
 #                      'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_'+date_string+'.pkl',
 #                      'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_'+date_string+'.pkl']
-spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.020_lin_renorm_'+date_string+'.pkl',
-                     'galah_dr52_ccd2_5640_5880_wvlstep_0.025_lin_renorm_'+date_string+'.pkl',
-                     'galah_dr52_ccd3_6475_6745_wvlstep_0.030_lin_renorm_'+date_string+'.pkl',
-                     'galah_dr52_ccd4_7700_7895_wvlstep_0.035_lin_renorm_'+date_string+'.pkl']
+#spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.020_lin_renorm_'+date_string+'.pkl',
+#                     'galah_dr52_ccd2_5640_5880_wvlstep_0.025_lin_renorm_'+date_string+'.pkl',
+#                     'galah_dr52_ccd3_6475_6745_wvlstep_0.030_lin_renorm_'+date_string+'.pkl',
+#                     'galah_dr52_ccd4_7700_7895_wvlstep_0.035_lin_renorm_'+date_string+'.pkl']
+spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.020_ext0_renorm_'+date_string+'.pkl',
+                     'galah_dr52_ccd2_5640_5880_wvlstep_0.025_ext0_renorm_'+date_string+'.pkl',
+                     'galah_dr52_ccd3_6475_6745_wvlstep_0.030_ext0_renorm_'+date_string+'.pkl',
+                     'galah_dr52_ccd4_7700_7895_wvlstep_0.035_ext0_renorm_'+date_string+'.pkl']
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -61,7 +65,7 @@ read_fe_lines = False
 train_multiple = True
 n_train_multiple = 29
 normalize_abund_values = True
-n_multiple_runs = 15
+n_multiple_runs = 20
 
 # data normalization and training set selection
 use_cannon_stellar_param = True
@@ -92,7 +96,7 @@ C_f_3 = 128
 C_k_3 = 5
 C_s_3 = 1
 P_s_3 = 4
-n_dense_nodes = [2500, 900, 1]  # the last layer is output, its size will be determined on the fly
+n_dense_nodes = [1500, 500, 1]  # the last layer is output, its size will be determined on the fly
 
 # --------------------------------------------------------
 # ---------------- Functions -----------------------------
@@ -234,7 +238,7 @@ else:
 # prepare spectral data for the further use in the Keras library
 spectral_data = np.expand_dims(spectral_data, axis=2)
 
-output_dir = 'Cannon3.0_SME_20171111'
+output_dir = '/data4/cotar/Cannon3.0_SME_20171111'
 if train_multiple:
     output_dir += '_multiple_'+str(n_train_multiple)
 if C_s_1 > 1:
@@ -335,7 +339,7 @@ for i_run in np.arange(n_multiple_runs)+1:
         if read_fe_lines:
             plot_suffix += '_withfe'
         # plot_suffix += '_f'+str(C_f_1)+'-'+str(C_f_2)+'-'+str(C_f_3)
-        plot_suffix += '_optim'
+        # plot_suffix += '_optim'
 
         # create a subset of spectra to be train on the sme values
         if squared_components:
@@ -443,15 +447,25 @@ for i_run in np.arange(n_multiple_runs)+1:
             abundance_ann.load_weights(metwork_weights_file, by_name=True)
         else:
             # define early stopping callback
-            earlystop = EarlyStopping(monitor='val_loss', patience=6, verbose=1, mode='auto')
+            earlystop = EarlyStopping(monitor='val_loss', patience=12, verbose=1, mode='auto')
             # fit the NN model
-            abundance_ann.fit(spectral_data_train, abund_values_train,
+            ann_fit_hist = abundance_ann.fit(spectral_data_train, abund_values_train,
                               epochs=125,
                               batch_size=512,
                               shuffle=True,
                               callbacks=[earlystop],
                               validation_split=0.05,
                               verbose=2)
+
+            last_loss = ann_fit_hist.history['loss'][-1]
+            if last_loss > 1.:
+                # something went wrong, do not evaluate this case
+                print 'Final loss was too large:', last_loss
+                save_fits = False
+                continue
+            else:
+                save_fits = True
+
             if save_models:
                 print 'Saving NN weighs - CAE'
                 abundance_ann.save_weights(metwork_weights_file, overwrite=True)
@@ -534,6 +548,7 @@ for i_run in np.arange(n_multiple_runs)+1:
             plt.close()
 
     # aslo save resuts at the end
-    fits_out = 'galah_abund_ANN_SME3.0.1_run{:02.0f}.fits'.format(i_run)
-    galah_param_complete.write(fits_out)
+    if save_fits:
+        fits_out = 'galah_abund_ANN_SME3.0.1_run{:02.0f}.fits'.format(i_run)
+        galah_param_complete.write(fits_out)
 
