@@ -1,6 +1,5 @@
 import imp, os
-
-from keras.layers import Input, Dense, Conv1D, MaxPooling1D, UpSampling1D, Dropout
+from keras.layers import Input, Dense, Conv1D, MaxPooling1D, UpSampling1D, Dropout, AveragePooling1D, Activation
 from keras.models import Model
 from keras.layers.advanced_activations import PReLU
 from sklearn.preprocessing import StandardScaler
@@ -8,7 +7,6 @@ from sklearn.externals import joblib
 from keras.callbacks import EarlyStopping
 from astropy.table import Table
 from socket import gethostname
-
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -21,20 +19,22 @@ pc_name = gethostname()
 # input data
 if pc_name == 'gigli' or pc_name == 'klemen-P5K-E':
     tsne_path = '/home/klemen/tSNE_test/'
-    galah_data_input = '/home/klemen/GALAH_data/'
+    galah_data_input = '/home/klemen/data4_mount/'
     imp.load_source('helper_functions', '../tSNE_test/helper_functions.py')
     imp.load_source('tsne_functions', '../tSNE_test/tsne_functions.py')
+    imp.load_source('spectra_collection_functions', '../Carbon-Spectra/spectra_collection_functions.py')
 else:
     tsne_path = '/data4/cotar/'
     galah_data_input = '/data4/cotar/'
 from helper_functions import move_to_dir
 from tsne_functions import *
+from spectra_collection_functions import read_pkl_spectra, save_pkl_spectra
 
-galah_param_file = 'sobject_iraf_52_reduced.fits'
-spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_RF.csv',
-                     'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_RF.csv',
-                     'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_RF.csv',
-                     'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_RF.csv']
+galah_param_file = 'sobject_iraf_52_reduced_20171111.fits'
+spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.04_lin_20171111.pkl',
+                     'galah_dr52_ccd2_5640_5880_wvlstep_0.05_lin_20171111.pkl',
+                     'galah_dr52_ccd3_6475_6745_wvlstep_0.06_lin_20171111.pkl',
+                     'galah_dr52_ccd4_7700_7895_wvlstep_0.07_lin_20171111.pkl']
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -45,35 +45,39 @@ save_models = True
 output_results = True
 output_plots = True
 limited_rows = False
-snr_cut = False
+snr_cut = True
 run_tsne_test = False
+train_phase = True
+train_subset = 0.05
 
-global_normalization = True
+global_normalization = False
 zero_mean_only = False
+use_dropout = True
+droupout_rate = 0.1
 
 # reading settings
-spectra_get_cols = [4000, 4000, 2000, 2016]
+spectra_get_cols = [3200, 3200, 3200, 2016]
 
 # AE NN band dependant settings
-n_dense_first = [1000, 1000, 1000, 1000]  # number of nodes in first and third fully connected layer of AE
+n_dense_first = [800, 800, 800, 800]  # number of nodes in first and third fully connected layer of AE
 n_dense_middle = [50, 50, 50, 50]  # number of nodes in the middle fully connected layer of AE
 
 # configuration of CAE network is the same for every spectral band:
 # convolution layer 1
-C_f_1 = 16  # number of filters
-C_k_1 = 5  # size of convolution kernel
+C_f_1 = 256  # number of filters
+C_k_1 = 9  # size of convolution kernel
 C_s_1 = 1  # strides value
-P_s_1 = 4  # size of pooling operator
+P_s_1 = 8  # size of pooling operator
 # convolution layer 2
-C_f_2 = 16
-C_k_2 = 5
+C_f_2 = 256
+C_k_2 = 7
 C_s_2 = 1
 P_s_2 = 4
 # convolution layer 3
-C_f_3 = 8
-C_k_3 = 3
+C_f_3 = 128
+C_k_3 = 5
 C_s_3 = 1
-P_s_3 = 2
+P_s_3 = 4
 
 # --------------------------------------------------------
 # ---------------- MAIN PROGRAM --------------------------
@@ -104,18 +108,18 @@ for i_band in [2]:
     suffix = ''
     if snr_cut and not limited_rows:
         snr_percentile = 5.
-        snr_col = 'snr_c'+str(i_band+1)+'_guess'  # as ccd numbering starts with 1
+        snr_col = 'snr_c'+str(i_band+1)+'_iraf'  # as ccd numbering starts with 1
         print 'Cutting off {:.1f}% of spectra with low snr value ('.format(snr_percentile)+snr_col+').'
         snr_percentile_value = np.percentile(galah_param[snr_col], snr_percentile)
-        skip_rows = np.where(galah_param[snr_col] < snr_percentile_value)[0]
+        use_rows = np.where(galah_param[snr_col] > snr_percentile_value)[0]
         suffix += '_snrcut'
     elif limited_rows:
         n_first_lines = 15000
         print 'Only limited number ('+str(n_first_lines)+') of spectra rows will be read'
-        skip_rows = np.arange(n_first_lines, len(galah_param))
+        use_rows = np.arange(n_first_lines, len(galah_param))
         suffix += '_subset'
     else:
-        skip_rows = None
+        use_rows = None
 
     # add some additional suffix describing processing parameters
     if global_normalization:
@@ -123,12 +127,18 @@ for i_band in [2]:
     if zero_mean_only:
         suffix += '_zeromean'
 
+    if use_rows is not None and train_phase:
+        n_use_rows = len(use_rows)
+        use_random = np.int64(np.random.rand(np.int64(train_subset * n_use_rows)) * n_use_rows)
+        use_rows = use_rows[np.unique(use_random)]
+        print 'Rows used for training purpose:', str(len(use_rows))
+
     # --------------------------------------------------------
     # ---------------- Data reading and handling -------------
     # --------------------------------------------------------
     print 'Reading spectral data from {:07.2f} to {:07.2f}'.format(wvl_range[col_start], wvl_range[col_end])
-    spectral_data = pd.read_csv(galah_data_input + spectra_file, sep=',', header=None, na_values='nan', dtype=np.float32,
-                                usecols=range(col_start, col_end), skiprows=skip_rows).values
+    spectral_data = read_pkl_spectra(galah_data_input + spectra_file,
+                                     read_cols=range(col_start, col_end), read_rows=use_rows)
 
     # possible nan data handling
     idx_bad_spectra = np.where(np.logical_not(np.isfinite(spectral_data)))
@@ -136,6 +146,7 @@ for i_band in [2]:
     if n_bad_spectra > 0:
         print 'Correcting '+str(n_bad_spectra)+' bad flux values in read spectra.'
         spectral_data[idx_bad_spectra] = 1.  # remove nan values with theoretical continuum flux value
+    spectral_data[spectral_data > 2.] = 2.
 
     # run t-SNE projection
     if run_tsne_test:
@@ -153,6 +164,7 @@ for i_band in [2]:
     ae_suffix = '_AE_'+str(n_dense_first[i_band])+'_'+str(n_dense_middle[i_band])
     # output data names
     normalizer_file = spectra_file[:-4] + '_' + str(spectra_get_cols[i_band]) + suffix + '_normalizer.pkl'
+    normalizer_file_global = spectra_file[:-4] + '_' + str(spectra_get_cols[i_band]) + suffix + '_normalizer_global.pkl'
     convolution_file = spectra_file[:-4] + cae_suffix + suffix + '_cae.h5'  # CAE - Convolutional autoencoder
     autoencoder_file = spectra_file[:-4] + cae_suffix + ae_suffix + suffix + '_ae.h5'  # AE - Autoencoder
     encoded_output_file = spectra_file[:-4] + cae_suffix + ae_suffix + suffix + '_encoded.csv'  # AE - Autoencoder
@@ -162,8 +174,14 @@ for i_band in [2]:
 
     # normalize data (flux at every wavelength)
     if global_normalization:
-        # TODO: save and recover normalization parameters
-        global_norm_param = [np.mean(spectral_data), np.std(spectral_data)]
+        if os.path.isfile(normalizer_file_global):
+            print 'Reading normalization parameters'
+            global_norm_param = joblib.load(normalizer_file_global)
+        else:
+            global_norm_param = [np.mean(spectral_data), np.std(spectral_data)]
+            if save_models:
+                print 'Saving normalization parameters'
+                joblib.dump(global_norm_param, normalizer_file_global)
         spectral_data_norm = spectral_data - global_norm_param[0]
         if not zero_mean_only:
             spectral_data_norm /= global_norm_param[1]
@@ -215,7 +233,8 @@ for i_band in [2]:
     x = PReLU(name='R_6')(x)
     x = UpSampling1D(P_s_1, name='S_6')(x)
     x = Conv1D(1, C_k_1, activation=None, padding='same', name='C_7')(x)
-    decoded_cae = PReLU()(x)
+    decoded_cae = Activation('sigmoid')(x)
+    # decoded_cae = PReLU()(x)
 
     # create a model for complete network
     convolutional_nn = Model(input_cae, decoded_cae)
@@ -240,8 +259,8 @@ for i_band in [2]:
                              callbacks=[earlystop],
                              # TODO: this selects the last part of the data (eq latest observations) for validation
                              # TODO: it should be corrected in future to improve the validation step
-                             validation_split=0.15,
-                             verbose=2)
+                             validation_split=0.1,
+                             verbose=1)
         if save_models:
             print 'Saving NN weighs - CAE'
             convolutional_nn.save_weights(convolution_file, overwrite=True)
@@ -267,13 +286,18 @@ for i_band in [2]:
     # fully connected layer in between the encoder and decoder part of the CAE
     x = Dense(n_dense_first[i_band], activation=None)(input_ae)
     x = PReLU()(x)
-    x = Dropout(0.2)(x)
+    if use_dropout:
+        x = Dropout(droupout_rate)(x)
     x = Dense(n_dense_middle[i_band], activation=None)(x)
     encoded_ae = PReLU()(x)
-    x = Dropout(0.2)(encoded_ae)
-    x = Dense(n_dense_first[i_band], activation=None)(x)
+    if use_dropout:
+        x = Dropout(droupout_rate)(encoded_ae)
+        x = Dense(n_dense_first[i_band], activation=None)(x)
+    else:
+        x = Dense(n_dense_first[i_band], activation=None)(encoded_ae)
     x = PReLU()(x)
-    x = Dropout(0.2)(x)
+    if use_dropout:
+        x = Dropout(droupout_rate)(x)
     x = Dense(aa_vector_length, activation=None)(x)
     decoded_ae = PReLU()(x)
 
@@ -297,8 +321,8 @@ for i_band in [2]:
                            batch_size=256,
                            shuffle=True,
                            callbacks=[earlystop],
-                           validation_split=0.15,  # TODO: same as for CAE part of the network
-                           verbose=2)
+                           validation_split=0.1,  # TODO: same as for CAE part of the network
+                           verbose=1)
         if save_models:
             print 'Saving NN weighs - AE'
             autoencoder_nn.save_weights(autoencoder_file, overwrite=True)
@@ -336,8 +360,17 @@ for i_band in [2]:
         np.savetxt(encoded_output_file, X_out_encoded_2, delimiter=',')  #, fmt='%f')
 
     # denormalize data from both outputs (full and partial network)
-    processed_data = normalizer.inverse_transform(np.squeeze(X_out_cae, axis=2))  # partial NN network
-    processed_data_2 = normalizer.inverse_transform(np.squeeze(X_out_cae_2, axis=2))  # full NN network
+    if global_normalization:
+        processed_data = np.squeeze(X_out_cae, axis=2)
+        processed_data_2 = np.squeeze(X_out_cae_2, axis=2)
+        if not zero_mean_only:
+            processed_data *= global_norm_param[1]
+            processed_data_2 *= global_norm_param[1]
+        processed_data += global_norm_param[0]
+        processed_data_2 += global_norm_param[0]
+    else:
+        processed_data = normalizer.inverse_transform(np.squeeze(X_out_cae, axis=2))  # partial NN network
+        processed_data_2 = normalizer.inverse_transform(np.squeeze(X_out_cae_2, axis=2))  # full NN network
 
     # --------------------------------------------------------
     # ---------------- Show or plot result of the analysis ---
@@ -347,7 +380,7 @@ for i_band in [2]:
         out_plot_dir = spectra_file[:-4] + cae_suffix + ae_suffix + suffix
         move_to_dir(out_plot_dir)
         print 'Plotting results for random spectra'
-        n_random_plots = 80
+        n_random_plots = 100
         id_plots = np.int32(np.random.rand(n_random_plots)*processed_data.shape[0])
         for i in id_plots:
             plt.plot(spectral_data[i], color='black', lw=0.75)

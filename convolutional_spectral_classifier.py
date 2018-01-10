@@ -77,18 +77,18 @@ activation_function = None  # if set to none defaults to PReLu
 C_f_1 = 256  # number of filters
 C_k_1 = 11  # size of convolution kernel
 C_s_1 = 2  # strides value
-P_s_1 = 4  # size of pooling operator
+P_s_1 = 6  # size of pooling operator
 # convolution layer 2
 C_f_2 = 128
 C_k_2 = 9
 C_s_2 = 2
-P_s_2 = 4
+P_s_2 = 6
 # convolution layer 3
 C_f_3 = 128
 C_k_3 = 5
 C_s_3 = 2
-P_s_3 = 4
-n_dense_nodes = [1500, 500, 1]
+P_s_3 = 6
+n_dense_nodes = [1200, 300, 1]
 
 # --------------------------------------------------------
 # ---------------- Various algorithm settings ------------
@@ -269,12 +269,12 @@ for f_width in range(1, 6, 1):
     earlystop = EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='auto')
     # fit the NN model
     abundance_ann.fit(spectral_data_train, spectra_class_train_encoded,
-                      epochs=8,
-                      batch_size=128,
+                      epochs=7,
+                      batch_size=256,
                       shuffle=True,
                       callbacks=[earlystop],
-                      validation_split=0.2,  # percent of the data at the end of the data-set
-                      verbose=1)
+                      validation_split=0.15,  # percent of the data at the end of the data-set
+                      verbose=2)
 
     # evaluate on all spectra
     print 'Predicting class values from all spectra'
