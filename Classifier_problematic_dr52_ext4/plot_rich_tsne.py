@@ -10,21 +10,45 @@ from os import chdir
 tsne = Table.read('tsne_result.csv')
 tsne_class = Table.read('dr52_class_joined.csv')
 tsne_class = tsne_class.filled(0)
-ann_class = joblib.load('multiclass_prob_array_withok_1.pkl')
+ann_class = joblib.load('oneclass_prob_array_withok_1.pkl')
 date_string = '20171111'
 galah_param_file = 'sobject_iraf_52_reduced_'+date_string+'_pos.fits'
 galah = Table.read('/home/klemen/data4_mount/'+galah_param_file)
 
-print ann_class[galah['sobject_id']==171003002601218]
+class_names = ['OK', 'CMP giants', 'HaHb emission', 'binary', 'hot stars', 'mol. abs. bands', 'problematic']
 
+ann_class_prob = np.array(ann_class)
+ann_class_val1 = np.max(np.int32(ann_class > 0.95) * (np.arange(len(class_names))+1), axis=1)-1
+ann_class_val2 = np.max(np.int32(ann_class > 0.75) * (np.arange(len(class_names))+1), axis=1)-1
+ann_class_val3 = np.max(np.int32(ann_class > 0.50) * (np.arange(len(class_names))+1), axis=1)-1
+ann_class_sorted = np.fliplr(np.argsort(ann_class_prob, axis=1))
+
+print np.sum(ann_class_val1 < 0)
+print np.sum(ann_class_val2 < 0)
+print np.sum(ann_class_val3 < 0)
+
+# export the data to csv for Gregors analysis and visualization
+def get_string_classes(class_numeric_list):
+	class_string_list = np.array([class_names[class_id] for class_id in class_numeric_list])
+	class_string_list[class_numeric_list < 0] = ''
+	return class_string_list
+
+galah['class_prob_95'] = get_string_classes(ann_class_val1)
+galah['class_prob_75'] = get_string_classes(ann_class_val2)
+galah['class_prob_50'] = get_string_classes(ann_class_val3)
+galah['class_1'] = get_string_classes(ann_class_sorted[:,0])
+galah['class_2'] = get_string_classes(ann_class_sorted[:,1])
+galah['class_3'] = get_string_classes(ann_class_sorted[:,2])
+galah.remove_columns(['ra','dec'])
+galah.write('problematic_ann_oneclass_dr52.csv', overwrite=True, format='ascii.csv')
+
+
+#ann_class_n = np.sum(ann_class, axis=1)
+#print np.min(ann_class_n), np.max(ann_class_n)
+#print np.unique(ann_class_n, return_counts=True)
 raise SystemExit
 
-ann_class = ann_class > 0.75
-
-ann_class_n = np.sum(ann_class, axis=1)
-print np.min(ann_class_n), np.max(ann_class_n)
-print np.unique(ann_class_n, return_counts=True)
-
+"""
 # plot some random spectra for selected 
 help_lines=[
     (r'$\mathrm{H_\alpha}$',6562.7970),
@@ -42,16 +66,14 @@ for a_c in [2, 3]:
 		print sid
 		fits = fits_class(sobject_id=sid, directory=spectra_dir)
 		fits.plot_norm_spectrum_on4axes(help_lines=help_lines, savefig=save_fig_dir)
-
-
-raise SystemExit
+"""
 
 for a_c in range(ann_class.shape[1]):
 	c_sid = galah[ann_class[:,a_c]]['sobject_id']
 	idx_tsne_sel = np.in1d(tsne['sobject_id'], c_sid)
 	plt.scatter(tsne['tsne_axis1'],tsne['tsne_axis2'], s=1, lw=0, c='black')
 	plt.scatter(tsne['tsne_axis1'][idx_tsne_sel],tsne['tsne_axis2'][idx_tsne_sel], s=1, lw=0, c='red')
-	plt.savefig('ann_'+str(a_c)+'_multi_wok3.png', dpi=300)
+	plt.savefig('ann_'+str(a_c)+'_multi_wok5.png', dpi=300)
 	plt.close()
 
 raise SystemExit

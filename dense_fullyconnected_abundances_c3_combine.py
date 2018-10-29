@@ -8,7 +8,7 @@ from helper import *
 imp.load_source('helper2', '../tSNE_test/cannon3_functions.py')
 from helper2 import *
 
-cannon_data = Table.read('/home/klemen/GALAH_data/sobject_iraf_iDR2_171103_cannon.fits')
+cannon_data = Table.read('/home/klemen/data4_mount/sobject_iraf_iDR2_171103_cannon.fits')
 abund_cannon = get_abundance_cols3(cannon_data.colnames)
 abund_cannon_flag = flag_cols(abund_cannon)
 abund_cannon_use = list(abund_cannon_flag)
@@ -16,7 +16,7 @@ for c in ['sobject_id', 'flag_guess', 'red_flag', 'flag_cannon', 'snr_c1_iraf', 
     abund_cannon_use.append(c)
 cannon_data = cannon_data[abund_cannon_use]
 
-in_dir = '/home/klemen/Autoencoders_spectra/Cannon3.0_SME_20171111_multiple_29_stride2_ext0/'
+in_dir = '/home/klemen/Autoencoders_spectra/Cannon3.0_SME_20171111_multiple_29_stride2_ext0_alllines_vsinivmic/'
 
 data_raw_list = list([])
 for fits in glob(in_dir+'*_run*.fits'):
