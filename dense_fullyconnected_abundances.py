@@ -64,7 +64,7 @@ use_renormalized_spectra = False
 read_complete_spectrum = True
 read_fe_lines = True
 train_multiple = True
-n_train_multiple = 23
+n_train_multiple = 30
 normalize_abund_values = True
 
 # data normalization and training set selection
@@ -92,7 +92,15 @@ import tensorflow as T
 
 def custom_error_function(y_true, y_pred):
     bool_finite = T.is_finite(y_true)
-    return K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=-1)
+    mse = K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=-1)
+    return K.sum(mse)
+
+
+def custom_error_function_2(y_true, y_pred):
+    bool_finite = T.is_finite(y_true)
+    # weights = T.reduce_sum(T.cast(bool_finite, dtype=T.int32), axis=0)
+    mse = K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=0)
+    return K.sum(mse)
 
 
 def read_spectra(spectra_file_list, line_list, complete_spectrum=False, get_elements=None, read_wvl_offset=0.2, add_fe_lines=False):  # in A
@@ -387,10 +395,10 @@ for sme_abundance in sme_abundances_list:
     #              kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
     # ann = PReLU(name='R_3')(ann)
     # encoded_cae = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
-    #
-    # # flatter output from convolutional network to the shape useful for fully-connected dense layers
-    # ann = Flatten(name='Conv_to_Dense')(ann)
     # -----------------------------------------------------------------------------------------------
+
+    # flatter output from convolutional network to the shape useful for fully-connected dense layers
+    ann = Flatten(name='Conv_to_Dense')(ann)
 
     # fully connected layers
     for n_nodes in n_dense_nodes:
@@ -411,13 +419,13 @@ for sme_abundance in sme_abundances_list:
     abundance_ann = Model(ann_input, ann)
     selected_optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8)
     if use_all_nonnan_rows:
-        abundance_ann.compile(optimizer=selected_optimizer, loss=custom_error_function)
+        abundance_ann.compile(optimizer=selected_optimizer, loss=custom_error_function_2)
     else:
         abundance_ann.compile(optimizer=selected_optimizer, loss='mse')
     abundance_ann.summary()
 
     # define early stopping callback
-    earlystop = EarlyStopping(monitor='val_loss', patience=6, verbose=1, mode='auto')
+    earlystop = EarlyStopping(monitor='val_loss', patience=10, verbose=1, mode='auto')
     # fit the NN model
     abundance_ann.fit(spectral_data_train, abund_values_train,
                       epochs=125,

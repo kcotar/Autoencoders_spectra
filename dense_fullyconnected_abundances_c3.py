@@ -7,10 +7,11 @@ from keras.layers.advanced_activations import PReLU
 from keras import regularizers, optimizers
 from sklearn.preprocessing import StandardScaler
 from sklearn.externals import joblib
-from keras.callbacks import EarlyStopping
+from keras.callbacks import EarlyStopping, ModelCheckpoint
 from astropy.table import Table, join, unique
 from socket import gethostname
 from itertools import combinations, combinations_with_replacement
+from glob import glob
 
 import matplotlib
 matplotlib.use('Agg')
@@ -67,7 +68,7 @@ read_fe_lines = True
 train_multiple = True
 n_train_multiple = 30  # 30 elements in total
 normalize_abund_values = True
-n_multiple_runs = 20
+n_multiple_runs = 3
 
 # data normalization and training set selection
 use_cannon_stellar_param = True
@@ -77,7 +78,7 @@ use_all_nonnan_rows = True
 squared_components = False
 
 # ann settings
-dropout_learning = False
+dropout_learning = True
 dropout_rate = 0.2
 use_regularizer = False
 activation_function = None  # if set to None defaults to PReLu
@@ -108,7 +109,15 @@ import tensorflow as T
 
 def custom_error_function(y_true, y_pred):
     bool_finite = T.is_finite(y_true)
-    return K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=-1)
+    mse = K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=-1)
+    return K.sum(mse)
+
+
+def custom_error_function_2(y_true, y_pred):
+    bool_finite = T.is_finite(y_true)
+    # weights = T.reduce_sum(T.cast(bool_finite, dtype=T.int32), axis=0)
+    mse = K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=0)
+    return K.sum(mse)
 
 
 def read_spectra(spectra_file_list, line_list, complete_spectrum=False, get_elements=None, read_wvl_offset=0.2, add_fe_lines=False):  # in A
@@ -120,7 +129,7 @@ def read_spectra(spectra_file_list, line_list, complete_spectrum=False, get_elem
     else:
         line_list_read = Table(line_list)
     spectral_data = list([])
-    for i_band in [0, 1, 2, 3]:
+    for i_band in [0,1,2,3]:
         spectra_file = spectra_file_list[i_band]
         # determine what is to be read from the spectra
         print 'Defining cols to be read'
@@ -151,6 +160,13 @@ def read_spectra(spectra_file_list, line_list, complete_spectrum=False, get_elem
 def correct_spectra():
     pass
 
+
+def bias(f1, f2):
+    diff = f1 - f2
+    if np.sum(np.isfinite(diff)) == 0:
+        return np.nan
+    else:
+        return np.nanmedian(diff)
 
 def rmse(f1, f2):
     diff = f1 - f2
@@ -192,7 +208,7 @@ if output_reference_plot:
         # first scatter graph - train points
         plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
         plt.scatter(abund_param[sme_abund], abund_param[canon_abund], lw=0, s=0.4, c='black')
-        plt.title('Reference abundance Cannon and SME plot - RMSE: '+str(rmse(abund_param[sme_abund], abund_param[canon_abund])))
+        plt.title('Reference abundance Cannon and SME plot - BIAS: {:.2f}    RMSE: {:.2f}'.format(bias(abund_param[sme_abund], abund_param[canon_abund]), rmse(abund_param[sme_abund], abund_param[canon_abund])))
         plt.xlabel('SME reference value')
         plt.ylabel('CANNON computed value')
         plt.xlim(plot_range)
@@ -254,12 +270,14 @@ if C_s_1 > 1:
     output_dir += '_stride'+str(C_s_1)
 if use_regularizer:
     output_dir += '_regularizer'
+if dropout_learning:
+    output_dir += '_dropout{:.1f}'.format(dropout_rate)
 if read_complete_spectrum:
     output_dir += '_allspectrum'
 elif read_fe_lines:
     output_dir += '_alllines'
 
-output_dir += '_prelu_globflux'
+output_dir += '_prelu_C-{:.0f}-{:.0f}-{:.0f}_Adam'.format(C_k_1, C_k_2, C_k_3)
 move_to_dir(output_dir)
 
 
@@ -404,8 +422,8 @@ for i_run in np.arange(n_multiple_runs)+1:
             # use a combination of l1 and/or l2 regularizer
             # w_reg = regularizers.l1_l2(1e-5, 1e-5)
             # a_reg = regularizers.l1_l2(1e-5, 1e-5)
-            w_reg = regularizers.l2(1e-5)
-            a_reg = regularizers.l2(1e-5)
+            w_reg = regularizers.l1(1e-5)
+            a_reg = regularizers.l1(1e-5)
         else:
             # default values for Conv1D and Dense layers
             w_reg = None
@@ -450,41 +468,69 @@ for i_run in np.arange(n_multiple_runs)+1:
 
         abundance_ann = Model(ann_input, ann)
         selected_optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8)
+        # selected_optimizer = optimizers.SGD(lr=0.01, momentum=0.0, decay=0.0, nesterov=True)
+        # selected_optimizer = optimizers.Adadelta(lr=1.0, rho=0.95, epsilon=None, decay=0.0)
         if use_all_nonnan_rows:
-            abundance_ann.compile(optimizer=selected_optimizer, loss=custom_error_function)
+            abundance_ann.compile(optimizer=selected_optimizer, loss=custom_error_function_2)
         else:
             abundance_ann.compile(optimizer=selected_optimizer, loss='mse')
         abundance_ann.summary()
 
-        metwork_weights_file = 'ann_network_run{:02.0f}.h5'.format(i_run)
+        metwork_weights_file = 'ann_network_run{:02.0f}_last.h5'.format(i_run)
         if os.path.isfile(metwork_weights_file):
             save_fits = False
             print 'Reading NN weighs - CAE'
             abundance_ann.load_weights(metwork_weights_file, by_name=True)
         else:
             # define early stopping callback
-            earlystop = EarlyStopping(monitor='val_loss', patience=3, verbose=1, mode='auto')
+            earlystop = EarlyStopping(monitor='val_loss', patience=20, verbose=1, mode='auto')
+            checkpoint = ModelCheckpoint('ann_network_run{:02.0f}'.format(i_run)+'_{epoch:02d}-{loss:.3f}-{val_loss:.3f}.h5',
+                                         monitor='val_loss', verbose=0, save_best_only=False,
+                                         save_weights_only=True, mode='auto', period=1)
             # fit the NN model
             ann_fit_hist = abundance_ann.fit(spectral_data_train, abund_values_train,
-                              epochs=100,
-                              batch_size=512,
-                              shuffle=True,
-                              callbacks=[earlystop],
-                              validation_split=0.03,
-                              verbose=2)
+                                             epochs=300,
+                                             batch_size=512,
+                                             shuffle=True,
+                                             callbacks=[earlystop, checkpoint],
+                                             validation_split=0.03,
+                                             verbose=2)
+
+            i_best = np.argmin(ann_fit_hist.history['val_loss'])
+            plt.plot(ann_fit_hist.history['loss'], label='Train')
+            plt.plot(ann_fit_hist.history['val_loss'], label='Validation')
+            plt.axvline(i_best, color='black', ls='--', alpha=0.5, label='Best val_loss')
+            plt.title('Model accuracy')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss value')
+            plt.ylim(0., 1.)
+            plt.tight_layout()
+            plt.legend()
+            plt.savefig('ann_network_loss_run{:02.0f}.png'.format(i_run), dpi=250)
+            plt.close()
 
             last_loss = ann_fit_hist.history['loss'][-1]
-            if last_loss > 1.:
+            if last_loss > 0.2:
                 # something went wrong, do not evaluate this case
-                print 'Final loss was too large:', last_loss
-                save_fits = False
-                continue
+                print 'Final loss was quite large:', last_loss
+                save_fits = True
+                save_model_last = False
             else:
                 save_fits = True
+                save_model_last = False
 
-            if save_models:
+            if save_model_last:
                 print 'Saving NN weighs - CAE'
                 abundance_ann.save_weights(metwork_weights_file, overwrite=True)
+
+            # recover weights of the best model and compute predictions
+            h5_weight_files = glob('ann_network_run{:02.0f}_{:02.0f}-*.h5'.format(i_run, i_best+1))
+            if len(h5_weight_files) == 1:
+                print 'Restoring epoch {:.0f} with the lowest validation loss ({:.3f}).'.format(i_best + 1, ann_fit_hist.history['val_loss'][i_best])
+                abundance_ann.load_weights(h5_weight_files[0], by_name=True)
+            else:
+                print 'The last model will be used to compute predictions.'
+                print 'Glob weights search results:', h5_weight_files
 
         # evaluate on all spectra
         print 'Predicting abundance values from spectra'
@@ -531,7 +577,7 @@ for i_run in np.arange(n_multiple_runs)+1:
             elem_plot = plot_abund.split('_')[0]
             # determine number of lines used for this element
             n_lines_element = np.sum(line_list['Element'] == elem_plot.capitalize())
-            graphs_title = elem_plot.capitalize() + ' - SME train objects: ' + str(n_train_sme) + ' (lines: ' + str(n_lines_element) + ') - RMSE: '+str(rmse(galah_param_complete[plot_abund], galah_param_complete[elem_plot+'_abund_ann']))
+            graphs_title = elem_plot.capitalize() + ' - SME train objects: ' + str(np.sum(np.isfinite(abund_param[plot_abund]))) + ' (lines: ' + str(n_lines_element) + ') - BIAS: {:.2f}   RMSE: {:.2f}'.format(bias(galah_param_complete[plot_abund], galah_param_complete[elem_plot+'_abund_ann']), rmse(galah_param_complete[plot_abund], galah_param_complete[elem_plot+'_abund_ann']))
             plot_range = (np.nanpercentile(abund_param[plot_abund], 1), np.nanpercentile(abund_param[plot_abund], 99))
             # first scatter graph - train points
             plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
@@ -549,7 +595,7 @@ for i_run in np.arange(n_multiple_runs)+1:
             print ' plotting parameter - ' + plot_param
             param_plot = plot_param  # .split('_')[0]
             # determine number of lines used for this element
-            graphs_title = 'SME parameter '+param_plot
+            graphs_title = param_plot.capitalize() + ' - SME train objects: ' + str(np.sum(np.isfinite(abund_param[plot_abund]))) + ' - BIAS: {:.2f}   RMSE: {:.2f}'.format(bias(galah_param_complete[param_plot], galah_param_complete[param_plot+'_ann']), rmse(galah_param_complete[param_plot], galah_param_complete[param_plot+'_ann']))
             plot_range = (np.nanpercentile(abund_param[plot_param], 0.1), np.nanpercentile(abund_param[plot_param], 99.9))
             # first scatter graph - train points
             plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
@@ -563,7 +609,7 @@ for i_run in np.arange(n_multiple_runs)+1:
             plt.savefig(param_plot+'_ANN_sme_'+plot_suffix+'.png', dpi=400)
             plt.close()
 
-    # aslo save resuts at the end
+    # also save results (predictions) at the end of every run
     if save_fits:
         fits_out = 'galah_abund_ANN_SME3.0.1_run{:02.0f}.fits'.format(i_run)
         galah_param_complete.write(fits_out)
