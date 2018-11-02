@@ -8,7 +8,7 @@ from keras import regularizers, optimizers
 from sklearn.preprocessing import StandardScaler
 from sklearn.externals import joblib
 from keras.callbacks import EarlyStopping, ModelCheckpoint
-from astropy.table import Table, join, unique
+from astropy.table import Table, join, unique, vstack
 from socket import gethostname
 from itertools import combinations, combinations_with_replacement
 from glob import glob
@@ -168,6 +168,7 @@ def bias(f1, f2):
     else:
         return np.nanmedian(diff)
 
+
 def rmse(f1, f2):
     diff = f1 - f2
     n_nonna = np.sum(np.isfinite(diff))
@@ -191,9 +192,15 @@ abund_param = unique(abund_param, keys=['sobject_id'])
 sme_abundances_list = [col for col in abund_param.colnames if '_fe' in col and len(col.split('_')) == 2 and len(col.split('_')[0]) <= 2]
 sme_params = ['teff', 'fe_h', 'logg', 'vbroad']
 
+# validation cluster data
+openc_param = Table.read(galah_data_input + 'GALAH_iDR3_OpenClusters.fits')
+globc_param = Table.read(galah_data_input + 'GALAH_iDR3_GlobularClusters.fits')
+cluster_param = vstack([openc_param, globc_param])
+cluster_param = unique(cluster_param, keys=['sobject_id'])  # sort the data among other thing
+
 # select only the ones with some datapoints
 sme_abundances_list = [col for col in sme_abundances_list if np.sum(np.isfinite(abund_param[col])) > 100]
-sme_abundances_list = [col for col in sme_abundances_list if len(col.split('_')[0])<=3]
+sme_abundances_list = [col for col in sme_abundances_list if len(col.split('_')[0]) <= 3]
 print 'SME Abundances:', sme_abundances_list
 print 'Number Abund:', len(sme_abundances_list)
 
@@ -277,7 +284,7 @@ if read_complete_spectrum:
 elif read_fe_lines:
     output_dir += '_alllines'
 
-output_dir += '_prelu_C-{:.0f}-{:.0f}-{:.0f}_Adam'.format(C_k_1, C_k_2, C_k_3)
+output_dir += '_prelu_C-{:.0f}-{:.0f}-{:.0f}_Adam_clusterval'.format(C_k_1, C_k_2, C_k_3)
 move_to_dir(output_dir)
 
 
@@ -287,7 +294,7 @@ move_to_dir(output_dir)
 # final set of parameters
 galah_param_complete = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
                             abund_param[list(np.hstack(('sobject_id', sme_abundances_list, sme_params)))],
-                            keys='sobject_id', join_type='outer')
+                            keys='sobject_id', join_type='left')
 # replace/fill strange masked (--) values with np.nan
 for c_col in galah_param_complete.colnames[1:]:   # 1: to skis sobject_id column
     galah_param_complete[c_col] = galah_param_complete[c_col].filled(np.nan)
@@ -314,9 +321,11 @@ for i_run in np.arange(n_multiple_runs)+1:
             plot_suffix = '_'.join(elements)
             output_col = [elem+'_abund_ann' for elem in elements]
             if use_all_nonnan_rows:
-                idx_abund_cols = np.isfinite(abund_param[sme_abundance].to_pandas().values).any(axis=1)
+                idx_abund_rows = np.isfinite(abund_param[sme_abundance].to_pandas().values).any(axis=1)
+                idx_abund_rows_valid = np.isfinite(cluster_param[sme_abundance].to_pandas().values).any(axis=1)
             else:
-                idx_abund_cols = np.isfinite(abund_param[sme_abundance].to_pandas().values).all(axis=1)
+                idx_abund_rows = np.isfinite(abund_param[sme_abundance].to_pandas().values).all(axis=1)
+                idx_abund_rows_valid = np.isfinite(cluster_param[sme_abundance].to_pandas().values).all(axis=1)
         else:
             print 'Working on abundance: ' + sme_abundance
             elements = sme_abundance.split('_')[0]
@@ -324,9 +333,11 @@ for i_run in np.arange(n_multiple_runs)+1:
             output_col = [elements + '_abund_ann']
             if use_all_nonnan_rows:
                 # TODO: more elegant way to handle this
-                idx_abund_cols = np.isfinite(abund_param[sme_abundance])
+                idx_abund_rows = np.isfinite(abund_param[sme_abundance])
+                idx_abund_rows_valid = np.isfinite(cluster_param[sme_abundance])
             else:
-                idx_abund_cols = np.isfinite(abund_param[sme_abundance])
+                idx_abund_rows = np.isfinite(abund_param[sme_abundance])
+                idx_abund_rows_valid = np.isfinite(cluster_param[sme_abundance])
         n_dense_nodes[-1] = len(sme_abundance) + len(additional_train_feat)  # 3 outputs for stellar physical parameters
 
         # create squared train components if requested to do so
@@ -351,7 +362,7 @@ for i_run in np.arange(n_multiple_runs)+1:
             print ' Total number of squared: '+str(n_squared)
             n_dense_nodes[-1] += n_squared
 
-        if np.sum(idx_abund_cols) < 300:
+        if np.sum(idx_abund_rows) < 300:
             print ' Not enough train data to do this.'
             continue
 
@@ -377,13 +388,17 @@ for i_run in np.arange(n_multiple_runs)+1:
         # create a subset of spectra to be train on the sme values
         if squared_components:
             param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
-                                abund_param[list(np.hstack(('sobject_id', sme_abundance, sme_params, squared_train_feat)))][idx_abund_cols],
+                                abund_param[list(np.hstack(('sobject_id', sme_abundance, sme_params, squared_train_feat)))][idx_abund_rows],
                                 keys='sobject_id', join_type='inner')
         else:
             param_joined = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
-                                abund_param[list(np.hstack(('sobject_id', sme_abundance, sme_params)))][idx_abund_cols],
+                                abund_param[list(np.hstack(('sobject_id', sme_abundance, sme_params)))][idx_abund_rows],
                                 keys='sobject_id', join_type='inner')
+            param_joined_valid = join(galah_param['sobject_id', 'teff_guess', 'feh_guess', 'logg_guess'],
+                                      cluster_param[list(np.hstack(('sobject_id', sme_abundance, sme_params)))][idx_abund_rows_valid],
+                                      keys='sobject_id', join_type='inner')
         idx_spectra_train = np.in1d(galah_param['sobject_id'], param_joined['sobject_id'])
+        idx_spectra_valid = np.in1d(galah_param['sobject_id'], param_joined_valid['sobject_id'])
         # Data consistency and repetition checks
         # print 'N param orig:', len(galah_param), 'uniqu', len(np.unique(galah_param['sobject_id']))
         # print 'N abund orig:', len(abund_param), 'uniqu', len(np.unique(abund_param['sobject_id']))
@@ -394,6 +409,7 @@ for i_run in np.arange(n_multiple_runs)+1:
             abund_values_train = param_joined[list(np.hstack((sme_abundance, additional_train_feat, squared_train_feat)))].to_pandas().values
         else:
             abund_values_train = param_joined[list(np.hstack((sme_abundance, additional_train_feat)))].to_pandas().values
+            abund_values_valid = param_joined_valid[list(np.hstack((sme_abundance, additional_train_feat)))].to_pandas().values
 
         if normalize_abund_values:
             abund_normalizer_file = 'normalizer_abund_'+'_'.join(elements)+'.pkl'
@@ -405,17 +421,21 @@ for i_run in np.arange(n_multiple_runs)+1:
                 print 'Normalizing input train parameters'
                 train_feat_mean = np.zeros(n_train_feat)
                 train_feat_std = np.zeros(n_train_feat)
+                for i_f in range(n_train_feat):
+                    train_feat_mean[i_f] = np.nanmean(abund_values_train[:, i_f])
+                    train_feat_std[i_f] = np.nanstd(abund_values_train[:, i_f])
                 joblib.dump([train_feat_mean, train_feat_std], abund_normalizer_file)
 
             for i_f in range(n_train_feat):
-                train_feat_mean[i_f] = np.nanmean(abund_values_train[:, i_f])
-                train_feat_std[i_f] = np.nanstd(abund_values_train[:, i_f])
-                abund_values_train[:, i_f] = (abund_values_train[:, i_f] - train_feat_mean[i_f])/train_feat_std[i_f]
+                abund_values_train[:, i_f] = (abund_values_train[:, i_f] - train_feat_mean[i_f]) / train_feat_std[i_f]
+                abund_values_valid[:, i_f] = (abund_values_valid[:, i_f] - train_feat_mean[i_f]) / train_feat_std[i_f]
 
         n_train_sme = np.sum(idx_spectra_train)
+        n_valid_cluster = np.sum(idx_spectra_valid)
         print 'Number of train objects: ' + str(n_train_sme)
+        print 'Number of valid objects: ' + str(n_valid_cluster)
         spectral_data_train = spectral_data[idx_spectra_train]
-        # spectral_data_train = np.expand_dims(spectral_data[idx_spectra_train], axis=2)
+        spectral_data_valid = spectral_data[idx_spectra_valid]
 
         # set up regularizer if needed
         if use_regularizer:
@@ -483,7 +503,7 @@ for i_run in np.arange(n_multiple_runs)+1:
             abundance_ann.load_weights(metwork_weights_file, by_name=True)
         else:
             # define early stopping callback
-            earlystop = EarlyStopping(monitor='val_loss', patience=20, verbose=1, mode='auto')
+            earlystop = EarlyStopping(monitor='val_loss', patience=50, verbose=1, mode='auto')
             checkpoint = ModelCheckpoint('ann_network_run{:02.0f}'.format(i_run)+'_{epoch:02d}-{loss:.3f}-{val_loss:.3f}.h5',
                                          monitor='val_loss', verbose=0, save_best_only=False,
                                          save_weights_only=True, mode='auto', period=1)
@@ -493,7 +513,8 @@ for i_run in np.arange(n_multiple_runs)+1:
                                              batch_size=512,
                                              shuffle=True,
                                              callbacks=[earlystop, checkpoint],
-                                             validation_split=0.03,
+                                             validation_split=0.0,
+                                             validation_data=(spectral_data_valid, abund_values_valid),
                                              verbose=2)
 
             i_best = np.argmin(ann_fit_hist.history['val_loss'])

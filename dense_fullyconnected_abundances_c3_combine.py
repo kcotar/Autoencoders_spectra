@@ -1,61 +1,152 @@
 import imp
-from astropy.table import Table, join
+from astropy.table import Table, join, hstack, vstack
 import numpy as np
 from glob import glob
+from os import chdir, system, path
+import matplotlib.pyplot as plt
 
 imp.load_source('helper', '../tSNE_test/helper_functions.py')
 from helper import *
 imp.load_source('helper2', '../tSNE_test/cannon3_functions.py')
 from helper2 import *
 
-cannon_data = Table.read('/home/klemen/data4_mount/sobject_iraf_iDR2_171103_cannon.fits')
-abund_cannon = get_abundance_cols3(cannon_data.colnames)
-abund_cannon_flag = flag_cols(abund_cannon)
-abund_cannon_use = list(abund_cannon_flag)
-for c in ['sobject_id', 'flag_guess', 'red_flag', 'flag_cannon', 'snr_c1_iraf', 'snr_c2_iraf', 'snr_c3_iraf', 'snr_c4_iraf', 'ra', 'dec', 'galah_id']:
-    abund_cannon_use.append(c)
-cannon_data = cannon_data[abund_cannon_use]
 
-in_dir = '/home/klemen/Autoencoders_spectra/Cannon3.0_SME_20171111_multiple_29_stride2_ext0_alllines_vsinivmic/'
+def bias(f1, f2):
+    diff = f1 - f2
+    if np.sum(np.isfinite(diff)) == 0:
+        return np.nan
+    else:
+        return np.nanmedian(diff)
 
-data_raw_list = list([])
-for fits in glob(in_dir+'*_run*.fits'):
-    print fits
-    abund_ann = Table.read(fits)
-    abund_cols = get_abundance_colsann(abund_ann.colnames)
-    abund_cols_flags = flag_cols(abund_cols)
-    print abund_cols
 
-    data_raw = abund_ann[abund_cols].to_pandas().values
-    data_raw_list.append(data_raw)
-    print data_raw.shape
+def rmse(f1, f2):
+    diff = f1 - f2
+    n_nonna = np.sum(np.isfinite(diff))
+    if n_nonna == 0:
+        return np.nan
+    else:
+        return np.sqrt(np.nansum(diff**2)/n_nonna)
 
-data_raw_all = np.stack(data_raw_list)
-data_raw_median = np.median(data_raw_all, axis=0)
-data_raw_std = np.std(data_raw_all, axis=0)
 
-for i_c in range(len(abund_cols)):
-    print abund_cols[i_c]
-    # write results to final array and compute std for every abundance measurement
-    abund_ann[abund_cols[i_c]] = data_raw_median[:, i_c]
-    abund_ann['e_'+abund_cols[i_c]] = data_raw_std[:, i_c]
-    std_abund = np.nanstd(abund_ann[abund_cols[i_c]])
-    # filter outliers by setting them to nan
-    # idx_std_out = np.abs(abund_ann[abund_cols[i_c]] - np.nanmean(abund_ann[abund_cols[i_c]])) >= 5.*std_abund
-    # abund_ann[abund_cols[i_c]][idx_std_out] = np.nan
-    # abund_ann['e_'+abund_cols[i_c]][idx_std_out] = np.nan
-    #
-    # print ' STD before:{:.2f} after:{:.2f}'.format(std_abund, np.nanstd(abund_ann[abund_cols[i_c]]))
-    # print '  - masked:', np.sum(idx_std_out)
+data_dir = '/data4/cotar/'
 
-sme_cols = [c for c in abund_ann.colnames if 'sme' in c]
-abund_ann.remove_columns(sme_cols)
+cannon_data = Table.read(data_dir + 'GALAH_iDR3_ts_DR2.fits')
+openc_data = Table.read(data_dir + 'GALAH_iDR3_OpenClusters.fits')
+globc_data = Table.read(data_dir + 'GALAH_iDR3_GlobularClusters.fits')
+cluster_data = vstack([openc_data, globc_data])
+# print cannon_data.colnames
 
-# subset of data to be able to use cannon abund flags
+sub_dir = 'Cannon3.0_SME_20180327_multiple_30_stride2_dropout0.2_alllines_prelu_C-9-5-3_Adam/'
 
-abund_ann_cannon = join(abund_ann, cannon_data, keys='sobject_id')
-# rename cols
-for i_c in range(len(abund_cols)):
-    abund_ann_cannon[abund_cannon_flag[i_c]].name = abund_cols_flags[i_c]
+fits_orig = glob(data_dir + sub_dir + 'galah_*_run*.fits')
 
-abund_ann_cannon.write(in_dir+'galah_abund_ANN_SME3.0.1_stacked_median.fits', overwrite=True)
+chdir(data_dir + sub_dir)
+system('mkdir combined')
+chdir('combined')
+
+final_ann_fits = 'GALAH_iDR3_ts_DR2_abund_ANN.fits'
+
+if not path.isfile(final_ann_fits):
+    data_raw_list = list([])
+    for fits in fits_orig:
+        fits_name = fits.split('/')[-1][:-5]
+        print fits_name
+        abund_ann = Table.read(fits)
+        ann_cols = [c for c in abund_ann.colnames if '_ann' in c]
+        remove_cols = [c for c in abund_ann.colnames if c not in ann_cols and 'sobject_id' not in c]
+        abund_ann.remove_columns(remove_cols)
+        # print abund_ann.colnames
+        data_raw = abund_ann[ann_cols].to_pandas().values
+        data_raw_list.append(data_raw)
+        # print data_raw.shape
+
+        # H-R diagnostics plot
+        plt.scatter(abund_ann['teff_ann'], abund_ann['logg_ann'], s=0.4, alpha=0.1, lw=0, c='black', label='ANN')
+        plt.scatter(cannon_data['teff'], cannon_data['logg'], s=0.6, alpha=1., lw=0, c='red', label='SME')
+        plt.xlabel('Teff')
+        plt.ylabel('logg')
+        plt.xlim(7600, 3300)
+        plt.ylim(5.5, 0)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(fits_name+'_kiel.png', dpi=250)
+        plt.close()
+
+    data_raw_all = np.stack(data_raw_list)
+    data_raw_median = np.median(data_raw_all, axis=0)
+    data_raw_std = np.std(data_raw_all, axis=0)
+
+    for i_c in range(len(ann_cols)):
+        print ann_cols[i_c]
+        # write results to final array and compute std for every abundance measurement
+        abund_ann[ann_cols[i_c]] = data_raw_median[:, i_c]
+        abund_ann['e_'+ann_cols[i_c]] = data_raw_std[:, i_c]
+        std_abund = np.nanstd(abund_ann[ann_cols[i_c]])
+        # filter outliers by setting them to nan
+        # idx_std_out = np.abs(abund_ann[abund_cols[i_c]] - np.nanmean(abund_ann[abund_cols[i_c]])) >= 5.*std_abund
+        # abund_ann[abund_cols[i_c]][idx_std_out] = np.nan
+        # abund_ann['e_'+abund_cols[i_c]][idx_std_out] = np.nan
+        #
+        # print ' STD before:{:.2f} after:{:.2f}'.format(std_abund, np.nanstd(abund_ann[abund_cols[i_c]]))
+        # print '  - masked:', np.sum(idx_std_out)
+
+    abund_ann.write(final_ann_fits, overwrite=True)
+else:
+    abund_ann = Table.read(final_ann_fits)
+
+# abund_ann = join(abund_ann, cannon_data, keys='sobject_id', join_type='left')
+abund_ann = join(abund_ann, cluster_data, keys='sobject_id', join_type='left')
+suffix = '_clusters'
+print abund_ann.colnames
+print abund_ann
+
+for plot_abund in [c for c in abund_ann.colnames if 'abund' in c and len(c.split('_')) == 3]:
+    print ' plotting attribute - ' + plot_abund
+    elem_plot = plot_abund.split('_')[0]
+    # determine number of lines used for this element
+    ann_vals = abund_ann[elem_plot + '_abund_ann']
+    sme_vals = abund_ann[elem_plot + '_fe']
+    graphs_title = elem_plot.capitalize() + ' - trained on SME values - BIAS: {:.2f}   RMSE: {:.2f}'.format(
+        bias(ann_vals, sme_vals), rmse(ann_vals, sme_vals))
+    plot_range = (np.nanpercentile(cannon_data[elem_plot + '_fe'], 0.5), np.nanpercentile(cannon_data[elem_plot + '_fe'], 99.5))
+    # first scatter graph - train points
+    plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
+    plt.scatter(sme_vals, ann_vals, lw=0, s=0.4, c='black')
+    plt.title(graphs_title)
+    plt.xlabel('SME reference value')
+    plt.ylabel('ANN computed value')
+    plt.xlim(plot_range)
+    plt.ylim(plot_range)
+    plt.savefig('final_' + elem_plot + '_ANN'+suffix+'.png', dpi=400)
+    plt.close()
+
+for plot_abund in ['teff', 'logg', 'fe_h', 'vbroad']:
+    print ' plotting attribute - ' + plot_abund
+    # determine number of lines used for this element
+    ann_vals = abund_ann[plot_abund + '_ann']
+    sme_vals = abund_ann[plot_abund + '']
+    graphs_title = plot_abund + ' - trained on SME values - BIAS: {:.2f}   RMSE: {:.2f}'.format(
+        bias(ann_vals, sme_vals), rmse(ann_vals, sme_vals))
+    plot_range = (np.nanpercentile(cannon_data[plot_abund], 0.5), np.nanpercentile(cannon_data[plot_abund], 99.5))
+    # first scatter graph - train points
+    plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
+    plt.scatter(sme_vals, ann_vals, lw=0, s=0.4, c='black')
+    plt.title(graphs_title)
+    plt.xlabel('SME reference value')
+    plt.ylabel('ANN computed value')
+    plt.xlim(plot_range)
+    plt.ylim(plot_range)
+    plt.savefig('final_' + plot_abund + '_ANN'+suffix+'.png', dpi=400)
+    plt.close()
+
+# H-R diagnostics plot
+plt.scatter(abund_ann['teff_ann'], abund_ann['logg_ann'], s=0.4, alpha=0.1, lw=0, c='black', label='ANN')
+plt.scatter(abund_ann['teff'], abund_ann['logg'], s=0.6, alpha=1., lw=0, c='red', label='SME')
+plt.xlabel('Teff')
+plt.ylabel('logg')
+plt.xlim(7600, 3300)
+plt.ylim(5.5, 0)
+plt.legend()
+plt.tight_layout()
+plt.savefig('final_kiel_ANN'+suffix+'.png', dpi=250)
+plt.close()
