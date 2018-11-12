@@ -33,10 +33,10 @@ data_dir = '/data4/cotar/'
 cannon_data = Table.read(data_dir + 'GALAH_iDR3_ts_DR2.fits')
 openc_data = Table.read(data_dir + 'GALAH_iDR3_OpenClusters.fits')
 globc_data = Table.read(data_dir + 'GALAH_iDR3_GlobularClusters.fits')
-cluster_data = vstack([openc_data, globc_data])
+cluster_data = vstack([openc_data, globc_data, cannon_data])
 # print cannon_data.colnames
 
-sub_dir = 'Cannon3.0_SME_20180327_multiple_30_stride2_dropout0.2_alllines_prelu_C-9-5-3_Adam/'
+sub_dir = 'Cannon3.0_SME_20180327_multiple_30_dropout0.2_allspectrum_prelu_C-7-5-3_F-16-32-64_Adam_completetrain_CNNdropout/'
 
 fits_orig = glob(data_dir + sub_dir + 'galah_*_run*.fits')
 
@@ -106,18 +106,32 @@ for plot_abund in [c for c in abund_ann.colnames if 'abund' in c and len(c.split
     # determine number of lines used for this element
     ann_vals = abund_ann[elem_plot + '_abund_ann']
     sme_vals = abund_ann[elem_plot + '_fe']
+    idx_oc = np.in1d(abund_ann['sobject_id'], openc_data['sobject_id'])
+    idx_gc = np.in1d(abund_ann['sobject_id'], globc_data['sobject_id'])
     graphs_title = elem_plot.capitalize() + ' - trained on SME values - BIAS: {:.2f}   RMSE: {:.2f}'.format(
         bias(ann_vals, sme_vals), rmse(ann_vals, sme_vals))
     plot_range = (np.nanpercentile(cannon_data[elem_plot + '_fe'], 0.5), np.nanpercentile(cannon_data[elem_plot + '_fe'], 99.5))
     # first scatter graph - train points
     plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
-    plt.scatter(sme_vals, ann_vals, lw=0, s=0.4, c='black')
+    plt.scatter(sme_vals, ann_vals, lw=0, s=0.4, c='black', label='')
+    plt.scatter(sme_vals[idx_oc], ann_vals[idx_oc], lw=0, s=1, c='green', label='OC')
+    plt.scatter(sme_vals[idx_gc], ann_vals[idx_gc], lw=0, s=1, c='red', label='GC')
     plt.title(graphs_title)
     plt.xlabel('SME reference value')
     plt.ylabel('ANN computed value')
     plt.xlim(plot_range)
     plt.ylim(plot_range)
+    plt.legend()
     plt.savefig('final_' + elem_plot + '_ANN'+suffix+'.png', dpi=400)
+    plt.close()
+
+    plt.scatter(abund_ann['fe_h_ann'], ann_vals, lw=0, s=0.5, alpha=0.2, c='black', label='')
+    plt.xlabel('Fe/H value')
+    plt.ylabel('ANN computed value')
+    plt.xlim([-2, 1])
+    plt.ylim([-2, 2])
+    plt.legend()
+    plt.savefig('final_' + elem_plot + '_ANN'+suffix+'_feh.png', dpi=400)
     plt.close()
 
 for plot_abund in ['teff', 'logg', 'fe_h', 'vbroad']:
@@ -125,17 +139,22 @@ for plot_abund in ['teff', 'logg', 'fe_h', 'vbroad']:
     # determine number of lines used for this element
     ann_vals = abund_ann[plot_abund + '_ann']
     sme_vals = abund_ann[plot_abund + '']
+    idx_oc = np.in1d(abund_ann['sobject_id'], openc_data['sobject_id'])
+    idx_gc = np.in1d(abund_ann['sobject_id'], globc_data['sobject_id'])
     graphs_title = plot_abund + ' - trained on SME values - BIAS: {:.2f}   RMSE: {:.2f}'.format(
         bias(ann_vals, sme_vals), rmse(ann_vals, sme_vals))
     plot_range = (np.nanpercentile(cannon_data[plot_abund], 0.5), np.nanpercentile(cannon_data[plot_abund], 99.5))
     # first scatter graph - train points
     plt.plot([plot_range[0], plot_range[1]], [plot_range[0], plot_range[1]], linestyle='dashed', c='red', alpha=0.5)
     plt.scatter(sme_vals, ann_vals, lw=0, s=0.4, c='black')
+    plt.scatter(sme_vals[idx_oc], ann_vals[idx_oc], lw=0, s=1, c='green', label='OC')
+    plt.scatter(sme_vals[idx_gc], ann_vals[idx_gc], lw=0, s=1, c='red', label='GC')
     plt.title(graphs_title)
     plt.xlabel('SME reference value')
     plt.ylabel('ANN computed value')
     plt.xlim(plot_range)
     plt.ylim(plot_range)
+    plt.legend()
     plt.savefig('final_' + plot_abund + '_ANN'+suffix+'.png', dpi=400)
     plt.close()
 

@@ -40,10 +40,6 @@ spectra_file_list = ['galah_dr53_ccd1_4710_4910_wvlstep_0.040_ext4_'+date_string
                      'galah_dr53_ccd2_5640_5880_wvlstep_0.050_ext4_'+date_string+'.pkl',
                      'galah_dr53_ccd3_6475_6745_wvlstep_0.060_ext4_'+date_string+'.pkl',
                      'galah_dr53_ccd4_7700_7895_wvlstep_0.070_ext4_'+date_string+'.pkl']
-#spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.020_lin_renorm_'+date_string+'.pkl',
-#                     'galah_dr52_ccd2_5640_5880_wvlstep_0.025_lin_renorm_'+date_string+'.pkl',
-#                     'galah_dr52_ccd3_6475_6745_wvlstep_0.030_lin_renorm_'+date_string+'.pkl',
-#                     'galah_dr52_ccd4_7700_7895_wvlstep_0.035_lin_renorm_'+date_string+'.pkl']
 # spectra_file_list = ['galah_dr52_ccd1_4710_4910_wvlstep_0.020_ext0_renorm_'+date_string+'.pkl',
 #                      'galah_dr52_ccd2_5640_5880_wvlstep_0.025_ext0_renorm_'+date_string+'.pkl',
 #                      'galah_dr52_ccd3_6475_6745_wvlstep_0.030_ext0_renorm_'+date_string+'.pkl',
@@ -62,13 +58,13 @@ output_reference_plot = False
 use_renormalized_spectra = False
 
 # data training and handling
-read_complete_spectrum = False  # read and use all spectrum pixels
+read_complete_spectrum = True  # read and use all spectrum pixels
 read_H_lines = False  # TODO: to be implemented
 read_fe_lines = True
 train_multiple = True
 n_train_multiple = 30  # 30 elements in total
 normalize_abund_values = True
-n_multiple_runs = 3
+n_multiple_runs = 11
 
 # data normalization and training set selection
 use_cannon_stellar_param = True
@@ -80,25 +76,27 @@ squared_components = False
 # ann settings
 dropout_learning = True
 dropout_rate = 0.2
+dropout_learning_c = False
+dropout_rate_c = 0.2
 use_regularizer = False
 activation_function = None  # if set to None defaults to PReLu
 
 # convolution layer 1
-C_f_1 = 256  # number of filters
-C_k_1 = 9  # size of convolution kernel
-C_s_1 = 2  # strides value
-P_s_1 = 4  # size of pooling operator
+C_f_1 = 16  # number of filters
+C_k_1 = 7  # size of convolution kernel
+C_s_1 = 1  # strides value
+P_s_1 = 3  # size of pooling operator
 # convolution layer 2
-C_f_2 = 128
+C_f_2 = 32
 C_k_2 = 5
 C_s_2 = 1
-P_s_2 = 4
+P_s_2 = 3
 # convolution layer 3
-C_f_3 = 128
+C_f_3 = 64
 C_k_3 = 3
 C_s_3 = 1
-P_s_3 = 4
-n_dense_nodes = [1500, 500, 1]  # the last layer is output, its size will be determined on the fly
+P_s_3 = 3
+n_dense_nodes = [1100, 300, 1]  # the last layer is output, its size will be determined on the fly
 
 # --------------------------------------------------------
 # ---------------- Functions -----------------------------
@@ -114,10 +112,44 @@ def custom_error_function(y_true, y_pred):
 
 
 def custom_error_function_2(y_true, y_pred):
+    # VERSION1 - not sure if indexing and axis value are correct in this way
+    # NOTE: boolean_maks reduces the dimensionality of the matrix, therefore the loss is prevailed by parameters with more observations
+    # bool_finite = T.is_finite(y_true)
+    # mse = K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=0)
+    # return K.sum(mse)
+    # VERSION2 - same thing, but using more understandable, but probably a bit slower for loop
+    mse_final = 0
+    for i1 in range(K.int_shape(y_pred)[1]):
+        v1 = y_pred[:, i1]
+        v2 = y_true[:, i1]
+        bool_finite = T.is_finite(v2)
+        mse_final += K.mean(K.square(T.boolean_mask(v1, bool_finite) - T.boolean_mask(v2, bool_finite)))
+    return mse_final
+
+
+def custom_error_function_3(y_true, y_pred):
     bool_finite = T.is_finite(y_true)
-    # weights = T.reduce_sum(T.cast(bool_finite, dtype=T.int32), axis=0)
+    mae = K.mean(K.abs(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=0)
+    return K.sum(mae)
+
+
+def custom_error_function_4(y_true, y_pred):
+    bool_finite = T.is_finite(y_true)
+    log_cosh = K.mean(K.log(K.cosh(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite))), axis=0)
+    return K.sum(log_cosh)
+
+
+def custom_error_function_5(y_true, y_pred):
+    bool_finite = T.is_finite(y_true)
     mse = K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=0)
-    return K.sum(mse)
+    mse_final = K.sum(mse)
+    for i1 in range(K.int_shape(y_pred)[1]):
+        for i2 in range(i1+1, K.int_shape(y_pred)[1]):
+            v1 = y_pred[:, i1] * y_pred[:, i2]
+            v2 = y_true[:, i1] * y_true[:, i2]
+            bool_finite = T.is_finite(v2)
+            mse_final += K.mean(K.square(T.boolean_mask(v1, bool_finite) - T.boolean_mask(v2, bool_finite)))
+    return mse_final
 
 
 def read_spectra(spectra_file_list, line_list, complete_spectrum=False, get_elements=None, read_wvl_offset=0.2, add_fe_lines=False):  # in A
@@ -129,7 +161,7 @@ def read_spectra(spectra_file_list, line_list, complete_spectrum=False, get_elem
     else:
         line_list_read = Table(line_list)
     spectral_data = list([])
-    for i_band in [0,1,2,3]:
+    for i_band in [0, 1, 2, 3]:
         spectra_file = spectra_file_list[i_band]
         # determine what is to be read from the spectra
         print 'Defining cols to be read'
@@ -197,6 +229,9 @@ openc_param = Table.read(galah_data_input + 'GALAH_iDR3_OpenClusters.fits')
 globc_param = Table.read(galah_data_input + 'GALAH_iDR3_GlobularClusters.fits')
 cluster_param = vstack([openc_param, globc_param])
 cluster_param = unique(cluster_param, keys=['sobject_id'])  # sort the data among other thing
+
+# TEST stact all data together as train
+abund_param = unique(vstack([cluster_param, abund_param]), keys=['sobject_id'])
 
 # select only the ones with some datapoints
 sme_abundances_list = [col for col in sme_abundances_list if np.sum(np.isfinite(abund_param[col])) > 100]
@@ -284,7 +319,7 @@ if read_complete_spectrum:
 elif read_fe_lines:
     output_dir += '_alllines'
 
-output_dir += '_prelu_C-{:.0f}-{:.0f}-{:.0f}_Adam_clusterval'.format(C_k_1, C_k_2, C_k_3)
+output_dir += '_prelu_C-{:.0f}-{:.0f}-{:.0f}_F-{:.0f}-{:.0f}-{:.0f}_Adam_completetrain'.format(C_k_1, C_k_2, C_k_3, C_f_1, C_f_2, C_f_3)
 move_to_dir(output_dir)
 
 
@@ -329,6 +364,7 @@ for i_run in np.arange(n_multiple_runs)+1:
         else:
             print 'Working on abundance: ' + sme_abundance
             elements = sme_abundance.split('_')[0]
+            move_to_dir(elements)
             plot_suffix = elements
             output_col = [elements + '_abund_ann']
             if use_all_nonnan_rows:
@@ -422,13 +458,18 @@ for i_run in np.arange(n_multiple_runs)+1:
                 train_feat_mean = np.zeros(n_train_feat)
                 train_feat_std = np.zeros(n_train_feat)
                 for i_f in range(n_train_feat):
-                    train_feat_mean[i_f] = np.nanmean(abund_values_train[:, i_f])
+                    train_feat_mean[i_f] = np.nanmedian(abund_values_train[:, i_f])
                     train_feat_std[i_f] = np.nanstd(abund_values_train[:, i_f])
                 joblib.dump([train_feat_mean, train_feat_std], abund_normalizer_file)
 
             for i_f in range(n_train_feat):
                 abund_values_train[:, i_f] = (abund_values_train[:, i_f] - train_feat_mean[i_f]) / train_feat_std[i_f]
                 abund_values_valid[:, i_f] = (abund_values_valid[:, i_f] - train_feat_mean[i_f]) / train_feat_std[i_f]
+                p_par = list(np.hstack((sme_abundance, additional_train_feat)))
+                p_val = abund_values_train[:, i_f]
+                plt.hist(p_val, range=(-2.5, 2.5), bins=50)
+                plt.savefig('train_norm_'+p_par[i_f]+'.png',dpi=200)
+                plt.close()
 
         n_train_sme = np.sum(idx_spectra_train)
         n_valid_cluster = np.sum(idx_spectra_valid)
@@ -457,15 +498,21 @@ for i_run in np.arange(n_multiple_runs)+1:
                      kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
         ann = PReLU(name='R_1')(ann)
         ann = MaxPooling1D(P_s_1, padding='same', name='P_1')(ann)
+        if dropout_learning_c:
+            ann = Dropout(dropout_rate_c, name='D_1')(ann)
         if C_f_2 > 0:
             ann = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2', strides=C_s_2,
                          kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
             ann = PReLU(name='R_2')(ann)
             ann = MaxPooling1D(P_s_2, padding='same', name='P_2')(ann)
+            if dropout_learning_c:
+                ann = Dropout(dropout_rate_c, name='D_2')(ann)
         ann = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3', strides=C_s_3,
                      kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
         ann = PReLU(name='R_3')(ann)
-        encoded_cae = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
+        ann = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
+        if dropout_learning_c:
+            ann = Dropout(dropout_rate_c, name='D_3')(ann)
 
         # flatter output from convolutional network to the shape useful for fully-connected dense layers
         ann = Flatten(name='Conv_to_Dense')(ann)
@@ -487,9 +534,9 @@ for i_run in np.arange(n_multiple_runs)+1:
                 # ann = PReLU(name='PReLU_' + str(n_nodes))(ann)
 
         abundance_ann = Model(ann_input, ann)
-        selected_optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8)
+        selected_optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999)
         # selected_optimizer = optimizers.SGD(lr=0.01, momentum=0.0, decay=0.0, nesterov=True)
-        # selected_optimizer = optimizers.Adadelta(lr=1.0, rho=0.95, epsilon=None, decay=0.0)
+        # selected_optimizer = optimizers.Adadelta(lr=1.0, rho=0.95, decay=0.0)
         if use_all_nonnan_rows:
             abundance_ann.compile(optimizer=selected_optimizer, loss=custom_error_function_2)
         else:
@@ -503,18 +550,18 @@ for i_run in np.arange(n_multiple_runs)+1:
             abundance_ann.load_weights(metwork_weights_file, by_name=True)
         else:
             # define early stopping callback
-            earlystop = EarlyStopping(monitor='val_loss', patience=50, verbose=1, mode='auto')
+            earlystop = EarlyStopping(monitor='val_loss', patience=200, verbose=1, mode='auto')
             checkpoint = ModelCheckpoint('ann_network_run{:02.0f}'.format(i_run)+'_{epoch:02d}-{loss:.3f}-{val_loss:.3f}.h5',
                                          monitor='val_loss', verbose=0, save_best_only=False,
                                          save_weights_only=True, mode='auto', period=1)
             # fit the NN model
             ann_fit_hist = abundance_ann.fit(spectral_data_train, abund_values_train,
-                                             epochs=300,
+                                             epochs=400,
                                              batch_size=512,
                                              shuffle=True,
                                              callbacks=[earlystop, checkpoint],
-                                             validation_split=0.0,
-                                             validation_data=(spectral_data_valid, abund_values_valid),
+                                             validation_split=0.04,
+                                             #validation_data=(spectral_data_valid, abund_values_valid),
                                              verbose=2)
 
             i_best = np.argmin(ann_fit_hist.history['val_loss'])
@@ -524,14 +571,14 @@ for i_run in np.arange(n_multiple_runs)+1:
             plt.title('Model accuracy')
             plt.xlabel('Epoch')
             plt.ylabel('Loss value')
-            plt.ylim(0., 1.)
+            plt.ylim(0., 20)
             plt.tight_layout()
             plt.legend()
             plt.savefig('ann_network_loss_run{:02.0f}.png'.format(i_run), dpi=250)
             plt.close()
 
             last_loss = ann_fit_hist.history['loss'][-1]
-            if last_loss > 0.2:
+            if last_loss > 15:
                 # something went wrong, do not evaluate this case
                 print 'Final loss was quite large:', last_loss
                 save_fits = True
@@ -630,8 +677,10 @@ for i_run in np.arange(n_multiple_runs)+1:
             plt.savefig(param_plot+'_ANN_sme_'+plot_suffix+'.png', dpi=400)
             plt.close()
 
+        if not train_multiple:
+            os.chdir('..')
+
     # also save results (predictions) at the end of every run
     if save_fits:
         fits_out = 'galah_abund_ANN_SME3.0.1_run{:02.0f}.fits'.format(i_run)
-        galah_param_complete.write(fits_out)
-
+        galah_param_complete.write(fits_out)   
