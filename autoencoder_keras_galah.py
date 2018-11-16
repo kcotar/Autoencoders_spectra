@@ -31,9 +31,7 @@ for line in line_list:
                               wvl_values <= line['line_end'])
     idx_read = np.logical_or(idx_read, idx_line)
 idx_read = np.where(idx_read)
-# OR
-# idx_read = np.where(np.logical_and(wvl_values > 6570,
-#                                    wvl_values < 6590))
+
 
 # print idx_read
 wvl_read = wvl_values[idx_read]
@@ -91,7 +89,7 @@ out_model_file = 'model_weights.h5'
 if os.path.isfile(out_model_file):
     autoencoder.load_weights(out_model_file)
 else:
-    autoencoder.compile(optimizer='sgd', loss='mse')
+    autoencoder.compile(optimizer='adam', loss='mse')
     autoencoder.fit(spectral_data_norm, spectral_data_norm, epochs=200, shuffle=True, validation_split=0.2)
     autoencoder.save_weights(out_model_file)
 

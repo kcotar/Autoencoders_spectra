@@ -36,7 +36,7 @@ globc_data = Table.read(data_dir + 'GALAH_iDR3_GlobularClusters.fits')
 cluster_data = vstack([openc_data, globc_data, cannon_data])
 # print cannon_data.colnames
 
-sub_dir = 'Cannon3.0_SME_20180327_multiple_30_dropout0.2_allspectrum_prelu_C-7-5-3_F-16-32-64_Adam_completetrain_CNNdropout/'
+sub_dir = 'Cannon3.0_SME_20180327_multiple_30_dropout0.3_allspectrum_prelu_C-11-5-3_F-32-64-64_Adam_completetrain/'
 
 fits_orig = glob(data_dir + sub_dir + 'galah_*_run*.fits')
 
@@ -54,7 +54,6 @@ if not path.isfile(final_ann_fits):
         abund_ann = Table.read(fits)
         ann_cols = [c for c in abund_ann.colnames if '_ann' in c]
         remove_cols = [c for c in abund_ann.colnames if c not in ann_cols and 'sobject_id' not in c]
-        abund_ann.remove_columns(remove_cols)
         # print abund_ann.colnames
         data_raw = abund_ann[ann_cols].to_pandas().values
         data_raw_list.append(data_raw)
@@ -71,6 +70,21 @@ if not path.isfile(final_ann_fits):
         plt.tight_layout()
         plt.savefig(fits_name+'_kiel.png', dpi=250)
         plt.close()
+
+        # H-R diagnostics plot
+        idx_train_val = np.isfinite(abund_ann['teff'])
+        plt.scatter(abund_ann['teff_ann'][idx_train_val], abund_ann['logg_ann'][idx_train_val], s=0.6, alpha=1., lw=0, c='black', label='ANN - train')
+        plt.scatter(cannon_data['teff'], cannon_data['logg'], s=0.6, alpha=1., lw=0, c='red', label='SME')
+        plt.xlabel('Teff')
+        plt.ylabel('logg')
+        plt.xlim(7600, 3300)
+        plt.ylim(5.5, 0)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(fits_name + '_kiel_trainset.png', dpi=250)
+        plt.close()
+
+        abund_ann.remove_columns(remove_cols)
 
     data_raw_all = np.stack(data_raw_list)
     data_raw_median = np.median(data_raw_all, axis=0)

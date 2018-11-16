@@ -75,19 +75,19 @@ squared_components = False
 
 # ann settings
 dropout_learning = True
-dropout_rate = 0.2
+dropout_rate = 0.3
 dropout_learning_c = False
 dropout_rate_c = 0.2
 use_regularizer = False
-activation_function = None  # if set to None defaults to PReLu
+activation_function = 'sigmoid'  # None  # if set to None defaults to PReLu
 
 # convolution layer 1
-C_f_1 = 16  # number of filters
-C_k_1 = 7  # size of convolution kernel
+C_f_1 = 32  # number of filters
+C_k_1 = 11  # size of convolution kernel
 C_s_1 = 1  # strides value
 P_s_1 = 3  # size of pooling operator
 # convolution layer 2
-C_f_2 = 32
+C_f_2 = 64
 C_k_2 = 5
 C_s_2 = 1
 P_s_2 = 3
@@ -96,7 +96,7 @@ C_f_3 = 64
 C_k_3 = 3
 C_s_3 = 1
 P_s_3 = 3
-n_dense_nodes = [1100, 300, 1]  # the last layer is output, its size will be determined on the fly
+n_dense_nodes = [1000, 300, 1]  # the last layer is output, its size will be determined on the fly
 
 # --------------------------------------------------------
 # ---------------- Functions -----------------------------
@@ -113,7 +113,7 @@ def custom_error_function(y_true, y_pred):
 
 def custom_error_function_2(y_true, y_pred):
     # VERSION1 - not sure if indexing and axis value are correct in this way
-    # NOTE: boolean_maks reduces the dimensionality of the matrix, therefore the loss is prevailed by parameters with more observations
+    # NOTE: boolean_mask reduces the dimensionality of the matrix, therefore the loss is prevailed by parameters with more observations
     # bool_finite = T.is_finite(y_true)
     # mse = K.mean(K.square(T.boolean_mask(y_pred, bool_finite) - T.boolean_mask(y_true, bool_finite)), axis=0)
     # return K.sum(mse)
@@ -318,6 +318,8 @@ if read_complete_spectrum:
     output_dir += '_allspectrum'
 elif read_fe_lines:
     output_dir += '_alllines'
+if activation_function is not None:
+    output_dir += '_'+activation_function
 
 output_dir += '_prelu_C-{:.0f}-{:.0f}-{:.0f}_F-{:.0f}-{:.0f}-{:.0f}_Adam_completetrain'.format(C_k_1, C_k_2, C_k_3, C_f_1, C_f_2, C_f_3)
 move_to_dir(output_dir)
