@@ -19,6 +19,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from keras import backend as K
+import tensorflow as tf
+tf_config = tf.ConfigProto(intra_op_parallelism_threads=72,
+                           inter_op_parallelism_threads=72,
+                           allow_soft_placement=True)
+session = tf.Session(config=tf_config)
+K.set_session(session)
+
 # PC hostname
 pc_name = gethostname()
 
@@ -75,11 +83,12 @@ squared_components = False
 
 # ann settings
 dropout_learning = True
-dropout_rate = 0.3
+dropout_rate = 0.2
 dropout_learning_c = False
 dropout_rate_c = 0.2
 use_regularizer = False
-activation_function = 'sigmoid'  # None  # if set to None defaults to PReLu
+activation_function = None  # dense layers - if set to None defaults to PReLu
+activation_function_c = None  # 'relu'  # None  # convolution layers - if set to None defaults to PReLu
 
 # convolution layer 1
 C_f_1 = 32  # number of filters
@@ -88,15 +97,15 @@ C_s_1 = 1  # strides value
 P_s_1 = 3  # size of pooling operator
 # convolution layer 2
 C_f_2 = 64
-C_k_2 = 5
+C_k_2 = 7
 C_s_2 = 1
 P_s_2 = 3
 # convolution layer 3
-C_f_3 = 64
+C_f_3 = 0
 C_k_3 = 3
 C_s_3 = 1
 P_s_3 = 3
-n_dense_nodes = [1000, 300, 1]  # the last layer is output, its size will be determined on the fly
+n_dense_nodes = [3000, 1500, 700, 300, 1]  # the last layer is output, its size will be determined on the fly
 
 # --------------------------------------------------------
 # ---------------- Functions -----------------------------
@@ -321,7 +330,7 @@ elif read_fe_lines:
 if activation_function is not None:
     output_dir += '_'+activation_function
 
-output_dir += '_prelu_C-{:.0f}-{:.0f}-{:.0f}_F-{:.0f}-{:.0f}-{:.0f}_Adam_completetrain'.format(C_k_1, C_k_2, C_k_3, C_f_1, C_f_2, C_f_3)
+output_dir += '_C-{:.0f}-{:.0f}-{:.0f}_F-{:.0f}-{:.0f}-{:.0f}_Adam_completetrain'.format(C_k_1, C_k_2, C_k_3, C_f_1, C_f_2, C_f_3)
 move_to_dir(output_dir)
 
 
@@ -495,26 +504,32 @@ for i_run in np.arange(n_multiple_runs)+1:
         # ann network - fully connected layers
         ann_input = Input(shape=(spectral_data_train.shape[1], 1), name='Input_'+plot_suffix)
         ann = ann_input
-
-        ann = Conv1D(C_f_1, C_k_1, activation=None, padding='same', name='C_1', strides=C_s_1,
+        # first cnn feature extraction layer
+        ann = Conv1D(C_f_1, C_k_1, activation=activation_function_c, padding='same', name='C_1', strides=C_s_1,
                      kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
-        ann = PReLU(name='R_1')(ann)
+        if activation_function_c is None:
+            ann = PReLU(name='R_1')(ann)
         ann = MaxPooling1D(P_s_1, padding='same', name='P_1')(ann)
         if dropout_learning_c:
             ann = Dropout(dropout_rate_c, name='D_1')(ann)
+        # second cnn feature extraction layer
         if C_f_2 > 0:
-            ann = Conv1D(C_f_2, C_k_2, activation=None, padding='same', name='C_2', strides=C_s_2,
+            ann = Conv1D(C_f_2, C_k_2, activation=activation_function_c, padding='same', name='C_2', strides=C_s_2,
                          kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
-            ann = PReLU(name='R_2')(ann)
+            if activation_function_c is None:
+                ann = PReLU(name='R_2')(ann)
             ann = MaxPooling1D(P_s_2, padding='same', name='P_2')(ann)
             if dropout_learning_c:
                 ann = Dropout(dropout_rate_c, name='D_2')(ann)
-        ann = Conv1D(C_f_3, C_k_3, activation=None, padding='same', name='C_3', strides=C_s_3,
-                     kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
-        ann = PReLU(name='R_3')(ann)
-        ann = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
-        if dropout_learning_c:
-            ann = Dropout(dropout_rate_c, name='D_3')(ann)
+        # third cnn feature extraction layer
+        if C_f_3 > 0:
+            ann = Conv1D(C_f_3, C_k_3, activation=activation_function_c, padding='same', name='C_3', strides=C_s_3,
+                         kernel_regularizer=w_reg, activity_regularizer=a_reg)(ann)
+            if activation_function_c is None:
+                ann = PReLU(name='R_3')(ann)
+            ann = MaxPooling1D(P_s_3, padding='same', name='P_3')(ann)
+            if dropout_learning_c:
+                ann = Dropout(dropout_rate_c, name='D_3')(ann)
 
         # flatter output from convolutional network to the shape useful for fully-connected dense layers
         ann = Flatten(name='Conv_to_Dense')(ann)
@@ -558,7 +573,7 @@ for i_run in np.arange(n_multiple_runs)+1:
                                          save_weights_only=True, mode='auto', period=1)
             # fit the NN model
             ann_fit_hist = abundance_ann.fit(spectral_data_train, abund_values_train,
-                                             epochs=400,
+                                             epochs=350,
                                              batch_size=512,
                                              shuffle=True,
                                              callbacks=[earlystop, checkpoint],
