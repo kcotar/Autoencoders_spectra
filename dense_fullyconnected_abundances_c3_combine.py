@@ -36,7 +36,7 @@ globc_data = Table.read(data_dir + 'GALAH_iDR3_GlobularClusters.fits')
 cluster_data = vstack([openc_data, globc_data, cannon_data])
 # print cannon_data.colnames
 
-sub_dir = 'Cannon3.0_SME_20180327_multiple_30_dropout0.3_allspectrum_prelu_C-11-5-3_F-32-64-64_Adam_completetrain/'
+sub_dir = 'Cannon3.0_SME_20180327_multiple_25_dropout0.2_allspectrum_C-11-7-5_F-32-64-64_Adam_completetrain_filtered/'
 
 fits_orig = glob(data_dir + sub_dir + 'galah_*_run*.fits')
 
@@ -142,8 +142,8 @@ for plot_abund in [c for c in abund_ann.colnames if 'abund' in c and len(c.split
     plt.scatter(abund_ann['fe_h_ann'], ann_vals, lw=0, s=0.5, alpha=0.2, c='black', label='')
     plt.xlabel('Fe/H value')
     plt.ylabel('ANN computed value')
-    plt.xlim([-2, 1])
-    plt.ylim([-2, 2])
+    plt.xlim([-1.75, 0.75])
+    plt.ylim(np.percentile(ann_vals, [2, 98]))
     plt.legend()
     plt.savefig('final_' + elem_plot + '_ANN'+suffix+'_feh.png', dpi=400)
     plt.close()
