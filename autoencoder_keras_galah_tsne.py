@@ -1,15 +1,14 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import umap
+#import umap
 
 from os import system, chdir
-from astropy.table import Table, Column
-from sklearn.preprocessing import StandardScaler
+from astropy.table import Table
 from sklearn.externals import joblib
 from MulticoreTSNE import MulticoreTSNE as TSNE_multi
 
 # input data
-galah_data_input = '/data4/cotar/'
+galah_data_input = '/shared/ebla/cotar/'
 
 date_string = '20180327'
 galah_data = Table.read(galah_data_input + 'sobject_iraf_53_reduced_'+date_string+'.fits')
@@ -17,18 +16,20 @@ cannon_data = Table.read(galah_data_input + 'sobject_iraf_iDR2_180325_cannon.fit
 ts_data = Table.read(galah_data_input + 'tsne_class_1_0.csv')
 ts_data = ts_data.filled()
 
-spectrum_data = list([])
-for i_b in [1, 2]:  # [1, 2, 3, 4]:
-    print 'Reading decoded spectrum', i_b
-    spectrum_data.append(joblib.load(galah_data_input + 'Autoencoder_dense_test_complex_ccd'+str(i_b)+'_prelu/encoded_spectra.pkl'))
-spectrum_data = np.hstack(spectrum_data)
+# spectrum_data = list([])
+# for i_b in [1, 2, 3, 4]:  # [1, 2, 3, 4]:
+#     print 'Reading decoded spectrum', i_b
+#     spectrum_data.append(joblib.load(galah_data_input + 'Autoencoder_dense_test_complex_ccd'+str(i_b)+'_prelu_30D_4layer/encoded_spectra.pkl'))
+# spectrum_data = np.hstack(spectrum_data)
+
+spectrum_data = joblib.load(galah_data_input + 'Autoencoder_dense_test_complex_ccd1234_prelu_50D_4layer/encoded_spectra_ccd5_nf50.pkl')
 
 # use only spectra will completly valid rows
 idx_valid = np.isfinite(spectrum_data).all(axis=1)
 spectrum_data = spectrum_data[idx_valid, :]
 galah_data = galah_data[idx_valid]
 
-out_dir = galah_data_input + 'Autoencoder_dense_test_complex_tsne_prelu'
+out_dir = galah_data_input + 'Autoencoder_dense_test_complex_ccd1234_prelu_50D_4layer_tsne'
 system('mkdir '+out_dir)
 chdir(out_dir)
 
@@ -39,7 +40,7 @@ print 'Running multi-core tSNE projection'
 perp = 75
 theta = 0.4
 tsne_class = TSNE_multi(n_components=2, perplexity=perp, n_iter=1200, n_iter_without_progress=350,
-                        init='random', verbose=1, method='barnes_hut', angle=theta, n_jobs=40)
+                        init='random', verbose=1, method='barnes_hut', angle=theta, n_jobs=65)
 tsne_res = tsne_class.fit_transform(spectrum_data)
 
 plt.scatter(tsne_res[:, 0], tsne_res[:, 1], lw=0, s=1, alpha=0.2, c='black')
@@ -58,6 +59,7 @@ for u_c in np.unique(ts_data['published_reduced_class_proj1']):
     plt.savefig('tsne_'+u_c+'.png', dpi=300)
     plt.close()
 
+raise SystemExit
 # --------------------------------------------
 # --------------------------------------------
 # run UMAP on reduced data
