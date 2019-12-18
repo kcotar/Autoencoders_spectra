@@ -34,7 +34,7 @@ if len(in_args) >= 3:
 
 print 'Reading data sets'
 galah_data_input = '/shared/ebla/cotar/'
-date_string = '20180327'
+date_string = '20190801'
 line_file = 'GALAH_Cannon_linelist_newer.csv'
 galah_param_file = 'sobject_iraf_53_reduced_'+date_string+'.fits'
 galah_param = Table.read(galah_data_input + galah_param_file)

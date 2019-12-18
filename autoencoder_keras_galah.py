@@ -1,4 +1,4 @@
-import imp, os, sys
+import os, sys
 os.environ['KERAS_BACKEND'] = 'tensorflow'
 
 import matplotlib
@@ -6,54 +6,80 @@ matplotlib.use('Agg')
 
 from keras.layers import Input, Dense, Dropout
 from keras.models import Model, Sequential, load_model
+from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers.advanced_activations import PReLU
 import numpy as np
 from astropy.table import Table
 from sklearn.externals import joblib
+from glob import glob
 import matplotlib.pyplot as plt
 
-imp.load_source('s_collection', '../Carbon-Spectra/spectra_collection_functions.py')
-from s_collection import CollectionParameters, read_pkl_spectra
+from importlib.machinery import SourceFileLoader
+SourceFileLoader('s_collection', '../Carbon-Spectra/spectra_collection_functions.py').load_module()
+from s_collection import CollectionParameters, read_pkl_spectra, save_pkl_spectra
 
 from keras import backend as K
 import tensorflow as tf
-tf_config = tf.ConfigProto(intra_op_parallelism_threads=32,
-                           inter_op_parallelism_threads=32,
+tf_config = tf.ConfigProto(intra_op_parallelism_threads=64,
+                           inter_op_parallelism_threads=64,
                            allow_soft_placement=True)
 session = tf.Session(config=tf_config)
 K.set_session(session)
 
 # get arguments if they were added to the procedure
 in_args = sys.argv
-n_l_e = 30
-n_epoch = 70
+n_l_e = 10
+n_epoch = 20
+optimizer = 'RMSprop'
 if len(in_args) >= 2:
     n_l_e = int(in_args[1])
 if len(in_args) >= 3:
     n_epoch = int(in_args[2])
+if len(in_args) >= 4:
+    optimizer = str(in_args[3])
 
-print 'Reading data sets'
+print('Used input parameters:', n_l_e, n_epoch, optimizer)
+
+print('Reading data sets')
 galah_data_input = '/shared/ebla/cotar/'
-date_string = '20180327'
+galah_spectra_input = '/shared/data-camelot/cotar/'
+date_string = '20190801'
 line_file = 'GALAH_Cannon_linelist_newer.csv'
 galah_param_file = 'sobject_iraf_53_reduced_'+date_string+'.fits'
 galah_param = Table.read(galah_data_input + galah_param_file)
+sme_param_file = 'GALAH_iDR3_v1_181221.fits'
+sme_param = Table.read(galah_data_input + sme_param_file)
 galah_tsne_flag = Table.read(galah_data_input + 'tsne_class_1_0.csv')
 galah_tsne_flag = galah_tsne_flag.filled()
+
+idx_get_spectra = galah_param['snr_c2_guess'] > 20.
+idx_get_spectra = np.logical_and(idx_get_spectra,
+                                 np.in1d(galah_param['sobject_id'],
+                                         galah_tsne_flag['sobject_id'], invert=True))
+idx_get_spectra = np.logical_and(idx_get_spectra,
+                                 np.in1d(galah_param['sobject_id'],
+                                         sme_param[sme_param['flag_sp'] == 0]['sobject_id'], invert=False))
+idx_get_spectra = np.logical_and(idx_get_spectra,
+                                 galah_param['red_flag'] == 0)
+idx_get_spectra = np.where(idx_get_spectra)[0]
+
 galah_tsne_flag = galah_tsne_flag[galah_tsne_flag['published_reduced_class_proj1'] != 'N/A']
 galah_tsne_flag = galah_tsne_flag[galah_tsne_flag['published_reduced_class_proj1'] != 'problematic']
 
-min_wvl = np.array([4725, 5665, 6485, 7700])
-max_wvl = np.array([4895, 5865, 6725, 7875])
+#min_wvl = np.array([4725, 5665, 6485, 7700])
+#max_wvl = np.array([4895, 5865, 6725, 7875])
+
+min_wvl = np.array([4710, 5640, 6475, 7700])
+max_wvl = np.array([4910, 5880, 6745, 7895])
 
 spectra_file_list = ['galah_dr53_ccd1_4710_4910_wvlstep_0.040_ext4_'+date_string+'.pkl',
                      'galah_dr53_ccd2_5640_5880_wvlstep_0.050_ext4_'+date_string+'.pkl',
                      'galah_dr53_ccd3_6475_6745_wvlstep_0.060_ext4_'+date_string+'.pkl',
                      'galah_dr53_ccd4_7700_7895_wvlstep_0.070_ext4_'+date_string+'.pkl']
 
-for read_ccd in range(len(spectra_file_list)):
+for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
     # parse resampling settings from filename
-    read_pkl_file = galah_data_input + spectra_file_list[read_ccd]
+    read_pkl_file = galah_spectra_input + spectra_file_list[read_ccd]
     csv_param = CollectionParameters(read_pkl_file)
     wvl_values = csv_param.get_wvl_values()
     wvl_limits = csv_param.get_wvl_range()
@@ -61,55 +87,51 @@ for read_ccd in range(len(spectra_file_list)):
 
     idx_read = np.where(np.logical_and(wvl_values >= min_wvl[read_ccd], wvl_values <= max_wvl[read_ccd]))[0]
 
-    suffix = '_{:.0f}D_4layer'.format(n_l_e)
-    out_dir = galah_data_input+'Autoencoder_dense_test_complex_ccd{:01.0f}_prelu'.format(read_ccd+1)+suffix
+    suffix = '_{:.0f}D_4layer'.format(n_l_e) + '_' + optimizer
+    out_dir = galah_spectra_input+'Autoencoder_dense_test_complex_ccd{:01.0f}_prelu'.format(read_ccd+1)+suffix
     os.system('mkdir '+out_dir)
     os.chdir(out_dir)
 
-    # print idx_read
+    # print(idx_read
     wvl_read = wvl_values[idx_read]
     n_wvl = len(wvl_read)
     
-    idx_get_spectra = np.where(galah_param['snr_c2_guess'] > 25)[0]
-    # idx_get_spectra = np.logical_and(np.logical_and(galah_param['teff_guess'] > 5800, galah_param['teff_guess'] < 6000),
-    #                                  np.logical_and(galah_param['logg_guess'] > 3.2, galah_param['logg_guess'] < 3.4))
-    
     n_obj = len(idx_get_spectra)
-    print n_wvl, n_obj
+    print('Reading pkl spectra with:', n_wvl, n_obj)
     spectral_data_all = read_pkl_spectra(read_pkl_file, read_cols=idx_read)
     
     idx_bad = np.logical_not(np.isfinite(spectral_data_all))
     if np.sum(idx_bad) > 0:
-        print 'Correcting bad values:', np.sum(idx_bad)
+        print('Correcting bad values:', np.sum(idx_bad))
         spectral_data_all[idx_bad] = 1.
     
-    idx_bad = spectral_data_all > 1.2
-    if np.sum(idx_bad) > 0:
-        print 'spectral_data_all large/low values:', np.sum(idx_bad)
-        spectral_data_all[idx_bad] = 1.2
+    # idx_bad = spectral_data_all > 1.2
+    # if np.sum(idx_bad) > 0:
+    #     print('spectral_data_all large/low values:', np.sum(idx_bad))
+    #     spectral_data_all[idx_bad] = 1.2
     
     idx_bad = spectral_data_all < 0
     if np.sum(idx_bad) > 0:
-        print 'spectral_data_all large/low values:', np.sum(idx_bad)
+        print('spectral_data_all large/low values:', np.sum(idx_bad))
         spectral_data_all[idx_bad] = 0
     
     # normalize data
     spectral_data_all = 1. - spectral_data_all
     
     spectral_data = spectral_data_all[idx_get_spectra, :]
-    print spectral_data.shape
-    print spectral_data_all.shape
+    print(spectral_data.shape)  # trainnig set of spectra
+    print(spectral_data_all.shape)  # complete set of observed and reduced spectra
 
-    activation = None  # 'relu' # PReLU if set to None
-    dropout_rate = 0.1
+    activation = None  # PReLU if set to None
+    dropout_rate = 0  # from 0 to 1
     decoded_layer_name = 'encoded'
     n_wvl = spectral_data.shape[1]
 
     # compute number of nodes in every connected layer
     n_l_1 = int(n_wvl * 0.75)
     n_l_2 = int(n_wvl * 0.50)
-    n_l_3 = 0 # int(n_wvl * 0.40)
-    n_l_4 = 0 # int(n_wvl * 0.20)
+    n_l_3 = 0  # int(n_wvl * 0.40)
+    n_l_4 = 0  # int(n_wvl * 0.20)
     n_l_5 = int(n_wvl * 0.25)
     n_l_6 = int(n_wvl * 0.10)
 
@@ -200,17 +222,22 @@ for read_ccd in range(len(spectra_file_list)):
     if os.path.isfile(out_model_file):
         autoencoder.load_weights(out_model_file, by_name=True)
     else:
-        autoencoder.compile(optimizer='adam', loss='mse')
+        autoencoder.compile(optimizer=optimizer, loss='mse')
+        checkpoint = ModelCheckpoint('ann_model_run_{epoch:03d}-{loss:.4f}-{val_loss:.4f}.h5',
+                                     monitor='val_loss', verbose=0, save_best_only=False,
+                                     save_weights_only=True, mode='auto', period=1)
         ann_fit_hist = autoencoder.fit(spectral_data, spectral_data,
                                        epochs=n_epoch,
+                                       callbacks=[checkpoint],
                                        shuffle=True,
-                                       batch_size=16384,
-                                       validation_split=0.10,
+                                       batch_size=32768,
+                                       validation_split=0.05,
                                        verbose=2)
-        autoencoder.save_weights(out_model_file)
 
+        i_best = np.argmin(ann_fit_hist.history['val_loss'])
         plt.plot(ann_fit_hist.history['loss'], label='Train')
         plt.plot(ann_fit_hist.history['val_loss'], label='Validation')
+        plt.axvline(np.arange(n_epoch)[i_best], ls='--', color='black', alpha=0.5)
         plt.title('Model accuracy')
         plt.xlabel('Epoch')
         plt.ylabel('Loss value')
@@ -220,21 +247,42 @@ for read_ccd in range(len(spectra_file_list)):
         plt.savefig('ann_network_loss.png', dpi=250)
         plt.close()
 
-    print 'Predicting values'
-    processed_data = autoencoder.predict(spectral_data, verbose=2, batch_size=2048)
+        # save loss and val_loss in textual format
+        loss_combined = np.vstack((ann_fit_hist.history['loss'], ann_fit_hist.history['val_loss'])).T
+        np.savetxt('ann_network_loss.txt', loss_combined)
+
+        # recover weights of the best model and compute predictions
+        h5_weight_files = glob('ann_model_run_{:03.0f}-*-*.h5'.format(i_best+1))
+        if len(h5_weight_files) == 1:
+            print('Restoring epoch {:.0f} with the lowest validation loss ({:.4f}).'.format(i_best + 1, ann_fit_hist.history['val_loss'][i_best]))
+            autoencoder.load_weights(h5_weight_files[0], by_name=True)
+            # delete all other h5 files that were not used and may occupy a lot of hdd space
+            for h5_file in glob('ann_model_run_*-*-*.h5'):
+                os.system('rm '+h5_file)
+
+        print('Saving final selected/best model/weights')
+        autoencoder.save_weights(out_model_file)
+
+    print('Predicting values')
+    processed_data_all = autoencoder.predict(spectral_data_all, verbose=2, batch_size=32768)
+
+    print('Saving ANN median like spectra')
+
+    pkl_out_file = spectra_file_list[read_ccd][:-4] + '_ann_median.pkl'
+    save_pkl_spectra(1. - processed_data_all, galah_spectra_input + pkl_out_file)
     
     # denormalize data
-    print processed_data
-    print processed_data.shape
+    print(processed_data_all)
+    print(processed_data_all.shape)
     
     os.system('mkdir random')
     os.chdir('random')
-    print ('Plotting random spectra')
-    for i_r in np.random.random(350)*n_obj:
+    print('Plotting random spectra')
+    for i_r in np.random.random(400)*n_obj:
         i_o = int(np.floor(i_r))
         plt.figure(figsize=(20, 5))
-        plt.plot(wvl_values[idx_read], 1. - spectral_data[i_o, :], color='black', lw=0.8)
-        plt.plot(wvl_values[idx_read], 1. - processed_data[i_o, :], color='blue', lw=0.8)
+        plt.plot(wvl_values[idx_read], 1. - spectral_data_all[i_o, :], color='black', lw=0.8)
+        plt.plot(wvl_values[idx_read], 1. - processed_data_all[i_o, :], color='blue', lw=0.8)
         plt.xlim(wvl_values[idx_read][0], wvl_values[idx_read][-1])
         plt.ylim(0.3, 1.1)
         plt.tight_layout()
@@ -244,7 +292,7 @@ for read_ccd in range(len(spectra_file_list)):
     
     os.system('mkdir tsne_flag')
     os.chdir('tsne_flag')
-    print ('Plotting tsne flaged spectra')
+    print('Plotting tsne flaged spectra')
     for s_id in np.random.choice(galah_tsne_flag['sobject_id'], 300, replace=False):
         i_o = np.where(galah_param['sobject_id'] == s_id)[0]
         if len(i_o) != 1:
@@ -252,8 +300,8 @@ for read_ccd in range(len(spectra_file_list)):
         else:
             i_o = i_o[0]
         plt.figure(figsize=(20, 5))
-        plt.plot(wvl_values[idx_read], 1. - spectral_data[i_o, :], color='black', lw=0.8)
-        plt.plot(wvl_values[idx_read], 1. - processed_data[i_o, :], color='blue', lw=0.8)
+        plt.plot(wvl_values[idx_read], 1. - spectral_data_all[i_o, :], color='black', lw=0.8)
+        plt.plot(wvl_values[idx_read], 1. - processed_data_all[i_o, :], color='blue', lw=0.8)
         plt.xlim(wvl_values[idx_read][0], wvl_values[idx_read][-1])
         plt.ylim(0.3, 1.1)
         plt.tight_layout()
@@ -263,12 +311,12 @@ for read_ccd in range(len(spectra_file_list)):
     
     os.system('mkdir large_dif')
     os.chdir('large_dif')
-    print ('Plotting strange spectra')
-    spectrum_diff = np.nansum(spectral_data - processed_data, axis=1)
+    print('Plotting strange spectra')
+    spectrum_diff = np.nansum(spectral_data_all - processed_data_all, axis=1)
     for i_o in np.argsort(spectrum_diff)[::-1][:300]:
         plt.figure(figsize=(20, 5))
-        plt.plot(wvl_values[idx_read], 1. - spectral_data[i_o, :], color='black', lw=0.8)
-        plt.plot(wvl_values[idx_read], 1. - processed_data[i_o, :], color='blue', lw=0.8)
+        plt.plot(wvl_values[idx_read], 1. - spectral_data_all[i_o, :], color='black', lw=0.8)
+        plt.plot(wvl_values[idx_read], 1. - processed_data_all[i_o, :], color='blue', lw=0.8)
         plt.xlim(wvl_values[idx_read][0], wvl_values[idx_read][-1])
         plt.ylim(0.3, 1.1)
         plt.tight_layout()
@@ -277,7 +325,7 @@ for read_ccd in range(len(spectra_file_list)):
     os.chdir('..')
 
     # model that will output decode values
-    print 'Predicting encoded values'
+    print('Predicting encoded values')
     autoencoder_encoded = Model(inputs=autoencoder.input,
                                 outputs=autoencoder.get_layer(decoded_layer_name).output)
     autoencoder_encoded.summary()
@@ -289,13 +337,13 @@ for read_ccd in range(len(spectra_file_list)):
     plt.close()
     # raise SystemExit
 
-    print autoencoder.get_layer(decoded_layer_name).get_weights()
-    print autoencoder_encoded.get_layer(decoded_layer_name).get_weights()
+    print(autoencoder.get_layer(decoded_layer_name).get_weights())
+    print(autoencoder_encoded.get_layer(decoded_layer_name).get_weights())
 
-    print ' -> Getting predictions from encoded layer'
-    decoded_spectra = autoencoder_encoded.predict(spectral_data, verbose=2)
-    decoded_spectra_all = autoencoder_encoded.predict(spectral_data_all, verbose=2)
-    print ' -> Saving reduced and encoded spectra'
+    print(' -> Getting predictions from encoded layer')
+    decoded_spectra = autoencoder_encoded.predict(spectral_data, verbose=2, batch_size=32768)
+    decoded_spectra_all = autoencoder_encoded.predict(spectral_data_all, verbose=2, batch_size=32768)
+    print(' -> Saving reduced and encoded spectra')
     out_file = 'encoded_spectra_ccd{:01.0f}_nf{:.0f}'.format(read_ccd+1, n_l_e)
     joblib.dump(decoded_spectra_all, out_file+'.pkl')
     # export as csv

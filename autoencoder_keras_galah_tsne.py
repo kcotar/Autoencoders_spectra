@@ -9,8 +9,9 @@ from MulticoreTSNE import MulticoreTSNE as TSNE_multi
 
 # input data
 galah_data_input = '/shared/ebla/cotar/'
+data_output = '/shared/data-camelot/cotar/'
 
-date_string = '20180327'
+date_string = '20190801'
 galah_data = Table.read(galah_data_input + 'sobject_iraf_53_reduced_'+date_string+'.fits')
 cannon_data = Table.read(galah_data_input + 'sobject_iraf_iDR2_180325_cannon.fits')
 ts_data = Table.read(galah_data_input + 'tsne_class_1_0.csv')
@@ -22,14 +23,14 @@ ts_data = ts_data.filled()
 #     spectrum_data.append(joblib.load(galah_data_input + 'Autoencoder_dense_test_complex_ccd'+str(i_b)+'_prelu_30D_4layer/encoded_spectra.pkl'))
 # spectrum_data = np.hstack(spectrum_data)
 
-spectrum_data = joblib.load(galah_data_input + 'Autoencoder_dense_test_complex_ccd1234_prelu_50D_4layer/encoded_spectra_ccd5_nf50.pkl')
+spectrum_data = joblib.load(galah_data_input + 'Autoencoder_dense_test_complex_ccd1234_relu_100D_4layer/encoded_spectra_ccd5_nf100.pkl')
 
 # use only spectra will completly valid rows
 idx_valid = np.isfinite(spectrum_data).all(axis=1)
 spectrum_data = spectrum_data[idx_valid, :]
 galah_data = galah_data[idx_valid]
 
-out_dir = galah_data_input + 'Autoencoder_dense_test_complex_ccd1234_prelu_50D_4layer_tsne'
+out_dir = galah_data_input + 'Autoencoder_dense_test_complex_ccd1234_relu_100D_4layer_tsne'
 system('mkdir '+out_dir)
 chdir(out_dir)
 
