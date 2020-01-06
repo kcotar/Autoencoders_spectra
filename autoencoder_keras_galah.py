@@ -4,12 +4,20 @@ os.environ['KERAS_BACKEND'] = 'tensorflow'
 import matplotlib
 matplotlib.use('Agg')
 
+#import tensorflow as tf
+#tf_config = tf.compat.v1.ConfigProto(intra_op_parallelism_threads=36,
+#                                     inter_op_parallelism_threads=4,
+#                                     allow_soft_placement=True)
+#session = tf.compat.v1.Session(config=tf_config)
+#tf.compat.v1.keras.backend.set_session(session)
+
 from keras.layers import Input, Dense, Dropout
 from keras.models import Model, Sequential, load_model
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers.advanced_activations import PReLU
+from keras.utils import plot_model
 import numpy as np
-from astropy.table import Table
+from astropy.table import Table, vstack, hstack
 from sklearn.externals import joblib
 from glob import glob
 import matplotlib.pyplot as plt
@@ -17,14 +25,6 @@ import matplotlib.pyplot as plt
 from importlib.machinery import SourceFileLoader
 SourceFileLoader('s_collection', '../Carbon-Spectra/spectra_collection_functions.py').load_module()
 from s_collection import CollectionParameters, read_pkl_spectra, save_pkl_spectra
-
-from keras import backend as K
-import tensorflow as tf
-tf_config = tf.ConfigProto(intra_op_parallelism_threads=64,
-                           inter_op_parallelism_threads=64,
-                           allow_soft_placement=True)
-session = tf.Session(config=tf_config)
-K.set_session(session)
 
 # get arguments if they were added to the procedure
 in_args = sys.argv
@@ -49,8 +49,19 @@ galah_param_file = 'sobject_iraf_53_reduced_'+date_string+'.fits'
 galah_param = Table.read(galah_data_input + galah_param_file)
 sme_param_file = 'GALAH_iDR3_v1_181221.fits'
 sme_param = Table.read(galah_data_input + sme_param_file)
-galah_tsne_flag = Table.read(galah_data_input + 'tsne_class_1_0.csv')
+galah_tsne_flag_old = Table.read(galah_data_input + 'tsne_class_1_0.csv')  # older classification
+galah_tsne_flag_new = Table.read(galah_data_input + 'tsne_classification_dr52_2018_04_09.csv')  # never classification with re-reduced spectra and omitted ccd4
+tsne_class_string = 'tsne_class'
+galah_tsne_flag_old['published_reduced_class_proj1'].name = tsne_class_string
+
+galah_tsne_flag = vstack([galah_tsne_flag_old['sobject_id', tsne_class_string], galah_tsne_flag_new['sobject_id', tsne_class_string]])
+print('t-SNE objects:', len(np.unique(galah_tsne_flag_old['sobject_id'])), len(np.unique(galah_tsne_flag_new['sobject_id'])), len(np.unique(galah_tsne_flag['sobject_id'])))
+
 galah_tsne_flag = galah_tsne_flag.filled()
+
+# remove peculiar flagged stars that are actually wanted in our case
+for no_use_class in ['cool metal-poor giants', 'hot stars', 'mol. absorption bands', 'MAB', 'CMP', 'HOT', 'HFR', 'NTR']:
+    galah_tsne_flag = galah_tsne_flag[galah_tsne_flag[tsne_class_string] != no_use_class]
 
 idx_get_spectra = galah_param['snr_c2_guess'] > 20.
 idx_get_spectra = np.logical_and(idx_get_spectra,
@@ -58,13 +69,14 @@ idx_get_spectra = np.logical_and(idx_get_spectra,
                                          galah_tsne_flag['sobject_id'], invert=True))
 idx_get_spectra = np.logical_and(idx_get_spectra,
                                  np.in1d(galah_param['sobject_id'],
-                                         sme_param[sme_param['flag_sp'] == 0]['sobject_id'], invert=False))
+                                         sme_param[sme_param['flag_sp'] < 16]['sobject_id'], invert=False))
 idx_get_spectra = np.logical_and(idx_get_spectra,
                                  galah_param['red_flag'] == 0)
 idx_get_spectra = np.where(idx_get_spectra)[0]
 
-galah_tsne_flag = galah_tsne_flag[galah_tsne_flag['published_reduced_class_proj1'] != 'N/A']
-galah_tsne_flag = galah_tsne_flag[galah_tsne_flag['published_reduced_class_proj1'] != 'problematic']
+# omit some classes for plotting purposes
+for no_use_class in ['N/A', 'problematic', 'SPI', 'TAB', 'TEM']:
+    galah_tsne_flag = galah_tsne_flag[galah_tsne_flag[tsne_class_string] != no_use_class]
 
 #min_wvl = np.array([4725, 5665, 6485, 7700])
 #max_wvl = np.array([4895, 5865, 6725, 7875])
@@ -87,7 +99,7 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
 
     idx_read = np.where(np.logical_and(wvl_values >= min_wvl[read_ccd], wvl_values <= max_wvl[read_ccd]))[0]
 
-    suffix = '_{:.0f}D_4layer'.format(n_l_e) + '_' + optimizer
+    suffix = '_{:.0f}D_{:.0f}epoch_4layer'.format(n_l_e, n_epoch) + '_' + optimizer
     out_dir = galah_spectra_input+'Autoencoder_dense_test_complex_ccd{:01.0f}_prelu'.format(read_ccd+1)+suffix
     os.system('mkdir '+out_dir)
     os.chdir(out_dir)
@@ -140,37 +152,43 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
 
     if n_l_1 > 0:
         autoencoder.add(Dense(n_l_1, input_shape=(n_wvl,), activation=activation, name='E_1'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_1'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_1'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_1'))
 
     if n_l_2 > 0:
         autoencoder.add(Dense(n_l_2, activation=activation, name='E_2'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_2'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_2'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_2'))
 
     if n_l_3 > 0:
         autoencoder.add(Dense(n_l_3, activation=activation, name='E_3'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_3'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_3'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_3'))
 
     if n_l_4 > 0:
         autoencoder.add(Dense(n_l_4, activation=activation, name='E_4'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_4'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_4'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_4'))
 
     if n_l_5 > 0:
         autoencoder.add(Dense(n_l_5, activation=activation, name='E_5'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_5'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_5'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_5'))
 
     if n_l_6 > 0:
         autoencoder.add(Dense(n_l_6, activation=activation, name='E_6'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_6'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_6'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_6'))
 
@@ -180,42 +198,54 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
 
     if n_l_6 > 0:
         autoencoder.add(Dense(n_l_6, activation=activation, name='D_1'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_8'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_8'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_8'))
 
     if n_l_5 > 0:
         autoencoder.add(Dense(n_l_5, activation=activation, name='D_2'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_9'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_9'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_9'))
 
     if n_l_4 > 0:
         autoencoder.add(Dense(n_l_4, activation=activation, name='D_3'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_10'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_10'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_10'))
 
     if n_l_3 > 0:
         autoencoder.add(Dense(n_l_3, activation=activation, name='D_4'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_11'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_11'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_11'))
 
     if n_l_2 > 0:
         autoencoder.add(Dense(n_l_2, activation=activation, name='D_5'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_12'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_12'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_12'))
 
     if n_l_1 > 0:
         autoencoder.add(Dense(n_l_1, activation=activation, name='D_6'))
-        autoencoder.add(Dropout(dropout_rate, name='DO_13'))
+        if dropout_rate > 0:
+            autoencoder.add(Dropout(dropout_rate, name='DO_13'))
         if activation is None:
             autoencoder.add(PReLU(name='PR_13'))
 
     autoencoder.add(Dense(n_wvl, activation='linear', name='recreated'))
     autoencoder.summary()
+
+    # Visualize network architecture and save the visualization as a file
+    plot_model(autoencoder, show_layer_names=True, show_shapes=True, to_file='ann_network_structure_a.pdf')
+    plot_model(autoencoder, show_layer_names=True, show_shapes=True, to_file='ann_network_structure_a.png', dpi=300)
+    # plot_model(autoencoder, show_layer_names=True, show_shapes=False, to_file='ann_network_structure_b.pdf')
+    # plot_model(autoencoder, show_layer_names=False, show_shapes=False, to_file='ann_network_structure_c.pdf')
 
     # model file handling
     out_model_file = 'model_weights.h5'
@@ -230,11 +260,12 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
                                        epochs=n_epoch,
                                        callbacks=[checkpoint],
                                        shuffle=True,
-                                       batch_size=32768,
+                                       batch_size=20000,
                                        validation_split=0.05,
                                        verbose=2)
 
-        i_best = np.argmin(ann_fit_hist.history['val_loss'])
+        i_best = np.argmin(ann_fit_hist.history['loss'])
+        # i_best = np.argmin(ann_fit_hist.history['val_loss'])
         plt.plot(ann_fit_hist.history['loss'], label='Train')
         plt.plot(ann_fit_hist.history['val_loss'], label='Validation')
         plt.axvline(np.arange(n_epoch)[i_best], ls='--', color='black', alpha=0.5)
@@ -254,7 +285,7 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
         # recover weights of the best model and compute predictions
         h5_weight_files = glob('ann_model_run_{:03.0f}-*-*.h5'.format(i_best+1))
         if len(h5_weight_files) == 1:
-            print('Restoring epoch {:.0f} with the lowest validation loss ({:.4f}).'.format(i_best + 1, ann_fit_hist.history['val_loss'][i_best]))
+            print('Restoring epoch {:.0f} with the lowest loss ({:.4f}).'.format(i_best + 1, ann_fit_hist.history['val_loss'][i_best]))
             autoencoder.load_weights(h5_weight_files[0], by_name=True)
             # delete all other h5 files that were not used and may occupy a lot of hdd space
             for h5_file in glob('ann_model_run_*-*-*.h5'):
@@ -274,55 +305,89 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
     # denormalize data
     print(processed_data_all)
     print(processed_data_all.shape)
-    
-    os.system('mkdir random')
-    os.chdir('random')
-    print('Plotting random spectra')
-    for i_r in np.random.random(400)*n_obj:
+
+    def plot_selected_spectrum(i_r):
         i_o = int(np.floor(i_r))
+        s_id = galah_param['sobject_id'][i_o]
+        idx_star = np.where(sme_param['sobject_id'] == s_id)[0]
+        sme_star = sme_param[idx_star]
         plt.figure(figsize=(20, 5))
         plt.plot(wvl_values[idx_read], 1. - spectral_data_all[i_o, :], color='black', lw=0.8)
         plt.plot(wvl_values[idx_read], 1. - processed_data_all[i_o, :], color='blue', lw=0.8)
         plt.xlim(wvl_values[idx_read][0], wvl_values[idx_read][-1])
         plt.ylim(0.3, 1.1)
+        if len(sme_star) == 1:
+            plot_title = 'red_f: {:.0f}, sme_f: {:.0f}, teff: {:.0f}, feh: {:.2f}, logg: {:.2f}, vbroad: {:.1f}'.format(np.float(sme_star['red_flag']), np.float(sme_star['flag_sp']), np.float(sme_star['teff']), np.float(sme_star['fe_h']), np.float(sme_star['logg']), np.float(sme_star['vbroad']))
+            plt.title(plot_title)
         plt.tight_layout()
         plt.savefig('s_{:06.0f}.png'.format(i_r), dpi=300)
         plt.close()
+    
+    os.system('mkdir random')
+    os.chdir('random')
+    print('Plotting random spectra')
+    for i_r in np.random.random(250)*n_obj:
+        plot_selected_spectrum(i_r)
     os.chdir('..')
     
     os.system('mkdir tsne_flag')
     os.chdir('tsne_flag')
     print('Plotting tsne flaged spectra')
-    for s_id in np.random.choice(galah_tsne_flag['sobject_id'], 300, replace=False):
+    for s_id in np.random.choice(galah_tsne_flag['sobject_id'], 250, replace=False):
         i_o = np.where(galah_param['sobject_id'] == s_id)[0]
         if len(i_o) != 1:
             continue
         else:
             i_o = i_o[0]
-        plt.figure(figsize=(20, 5))
-        plt.plot(wvl_values[idx_read], 1. - spectral_data_all[i_o, :], color='black', lw=0.8)
-        plt.plot(wvl_values[idx_read], 1. - processed_data_all[i_o, :], color='blue', lw=0.8)
-        plt.xlim(wvl_values[idx_read][0], wvl_values[idx_read][-1])
-        plt.ylim(0.3, 1.1)
-        plt.tight_layout()
-        plt.savefig('s_{:06.0f}.png'.format(i_o), dpi=300)
-        plt.close()
+        plot_selected_spectrum(i_o)
     os.chdir('..')
+
+    os.system('mkdir tsne_HaHb')
+    os.chdir('tsne_HaHb')
+    print('Plotting potential HaHb emitters')
+    for s_id in np.random.choice(galah_tsne_flag['sobject_id'][np.logical_or(galah_tsne_flag[tsne_class_string] == 'HaHb emission',galah_tsne_flag[tsne_class_string] == 'HAE_HBE')], 250, replace=False):
+        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
+        if len(i_o) != 1:
+            continue
+        else:
+            i_o = i_o[0]
+        plot_selected_spectrum(i_o)
+    os.chdir('..')
+
     
     os.system('mkdir large_dif')
     os.chdir('large_dif')
     print('Plotting strange spectra')
     spectrum_diff = np.nansum(spectral_data_all - processed_data_all, axis=1)
-    for i_o in np.argsort(spectrum_diff)[::-1][:300]:
-        plt.figure(figsize=(20, 5))
-        plt.plot(wvl_values[idx_read], 1. - spectral_data_all[i_o, :], color='black', lw=0.8)
-        plt.plot(wvl_values[idx_read], 1. - processed_data_all[i_o, :], color='blue', lw=0.8)
-        plt.xlim(wvl_values[idx_read][0], wvl_values[idx_read][-1])
-        plt.ylim(0.3, 1.1)
-        plt.tight_layout()
-        plt.savefig('s_{:06.0f}.png'.format(i_o), dpi=300)
-        plt.close()
+    for i_o in np.argsort(spectrum_diff)[::-1][:250]:
+        plot_selected_spectrum(i_o)
     os.chdir('..')
+
+    os.system('mkdir fast_rot')
+    os.chdir('fast_rot')
+    print('Plotting fast rotators')
+    for s_id in np.random.choice(sme_param[sme_param['vbroad'] >= 22]['sobject_id'], 250, replace=False):
+        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
+        if len(i_o) != 1:
+            continue
+        else:
+            i_o = i_o[0]
+        plot_selected_spectrum(i_o)
+    os.chdir('..')
+
+    os.system('mkdir hot_stars')
+    os.chdir('hot_stars')
+    print('Plotting hot stars')
+    for s_id in np.random.choice(sme_param[sme_param['teff'] >= 6800]['sobject_id'], 250, replace=False):
+        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
+        if len(i_o) != 1:
+            continue
+        else:
+            i_o = i_o[0]
+        plot_selected_spectrum(i_o)
+    os.chdir('..')
+
+
 
     # model that will output decode values
     print('Predicting encoded values')
@@ -373,4 +438,3 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
         plt.close()
     
     os.chdir('..')
-
