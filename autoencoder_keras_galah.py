@@ -15,6 +15,7 @@ from keras.layers import Input, Dense, Dropout
 from keras.models import Model, Sequential, load_model
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers.advanced_activations import PReLU
+from keras import backend as K
 from keras.utils import plot_model
 import numpy as np
 from astropy.table import Table, vstack, hstack
@@ -25,6 +26,103 @@ import matplotlib.pyplot as plt
 from importlib.machinery import SourceFileLoader
 SourceFileLoader('s_collection', '../Carbon-Spectra/spectra_collection_functions.py').load_module()
 from s_collection import CollectionParameters, read_pkl_spectra, save_pkl_spectra
+
+
+def plot_selected_spectrum(i_r):
+    i_o = int(np.floor(i_r))
+    s_id = galah_param['sobject_id'][i_o]
+    idx_star = np.where(sme_param['sobject_id'] == s_id)[0]
+    sme_star = sme_param[idx_star]
+    plt.figure(figsize=(20, 5))
+    plt.plot(wvl_values[idx_read], 1. - spectral_data_all[i_o, :], color='black', lw=0.8)
+    plt.plot(wvl_values[idx_read], 1. - processed_data_all[i_o, :], color='blue', lw=0.8)
+    plt.xlim(wvl_values[idx_read][0], wvl_values[idx_read][-1])
+    plt.ylim(0.3, 1.1)
+    if len(sme_star) == 1:
+        plot_title = 'red_f: {:.0f}, sme_f: {:.0f}, teff: {:.0f}, feh: {:.2f}, logg: {:.2f}, vbroad: {:.1f}'.format(np.float(sme_star['red_flag']), np.float(sme_star['flag_sp']), np.float(sme_star['teff']), np.float(sme_star['fe_h']), np.float(sme_star['logg']), np.float(sme_star['vbroad']))
+        plt.title(plot_title)
+    plt.tight_layout()
+    plt.savefig('s_{:06.0f}.png'.format(i_r), dpi=300)
+    plt.close()
+    
+
+def plot_sample_spectra():
+    os.system('mkdir random')
+    os.chdir('random')
+    print('Plotting random spectra')
+    for i_r in np.random.random(300)*n_obj:
+        plot_selected_spectrum(i_r)
+    os.chdir('..')
+    
+    os.system('mkdir tsne_flag')
+    os.chdir('tsne_flag')
+    print('Plotting tsne flaged spectra')
+    for s_id in np.random.choice(galah_tsne_flag['sobject_id'], 250, replace=False):
+        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
+        if len(i_o) != 1:
+            continue
+        else:
+            i_o = i_o[0]
+        plot_selected_spectrum(i_o)
+    os.chdir('..')
+
+    os.system('mkdir tsne_HaHb')
+    os.chdir('tsne_HaHb')
+    print('Plotting potential HaHb emitters')
+    for s_id in np.random.choice(galah_tsne_flag['sobject_id'][np.logical_or(galah_tsne_flag[tsne_class_string] == 'HaHb emission',
+                                                                             galah_tsne_flag[tsne_class_string] == 'HAE_HBE')], 250, replace=False):
+        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
+        if len(i_o) != 1:
+            continue
+        else:
+            i_o = i_o[0]
+        plot_selected_spectrum(i_o)
+    os.chdir('..')
+    
+    os.system('mkdir large_dif')
+    os.chdir('large_dif')
+    print('Plotting strange spectra')
+    spectrum_diff = np.nansum(spectral_data_all - processed_data_all, axis=1)
+    for i_o in np.argsort(spectrum_diff)[::-1][:250]:
+        plot_selected_spectrum(i_o)
+    os.chdir('..')
+
+    os.system('mkdir fast_rot')
+    os.chdir('fast_rot')
+    print('Plotting fast rotators')
+    for s_id in np.random.choice(sme_param[sme_param['vbroad'] >= 35]['sobject_id'], 300, replace=False):
+        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
+        if len(i_o) != 1:
+            continue
+        else:
+            i_o = i_o[0]
+        plot_selected_spectrum(i_o)
+    os.chdir('..')
+
+    os.system('mkdir hot_stars')
+    os.chdir('hot_stars')
+    print('Plotting hot stars')
+    for s_id in np.random.choice(sme_param[sme_param['teff'] >= 6800]['sobject_id'], 300, replace=False):
+        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
+        if len(i_o) != 1:
+            continue
+        else:
+            i_o = i_o[0]
+        plot_selected_spectrum(i_o)
+    os.chdir('..')
+
+    os.system('mkdir cold_stars')
+    os.chdir('cold_stars')
+    print('Plotting colder stars')
+    for s_id in np.random.choice(sme_param[sme_param['teff'] <= 4000]['sobject_id'], 300, replace=False):
+        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
+        if len(i_o) != 1:
+            continue
+        else:
+            i_o = i_o[0]
+        plot_selected_spectrum(i_o)
+    os.chdir('..')
+
 
 # get arguments if they were added to the procedure
 in_args = sys.argv
@@ -63,7 +161,7 @@ galah_tsne_flag = galah_tsne_flag.filled()
 for no_use_class in ['cool metal-poor giants', 'hot stars', 'mol. absorption bands', 'MAB', 'CMP', 'HOT', 'HFR', 'NTR']:
     galah_tsne_flag = galah_tsne_flag[galah_tsne_flag[tsne_class_string] != no_use_class]
 
-idx_get_spectra = galah_param['snr_c2_guess'] > 20.
+idx_get_spectra = galah_param['snr_c2_guess'] > 30.
 idx_get_spectra = np.logical_and(idx_get_spectra,
                                  np.in1d(galah_param['sobject_id'],
                                          galah_tsne_flag['sobject_id'], invert=True))
@@ -99,7 +197,7 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
 
     idx_read = np.where(np.logical_and(wvl_values >= min_wvl[read_ccd], wvl_values <= max_wvl[read_ccd]))[0]
 
-    suffix = '_{:.0f}D_{:.0f}epoch_4layer'.format(n_l_e, n_epoch) + '_' + optimizer
+    suffix = '_{:.0f}D_{:.0f}epoch_4layer'.format(n_l_e, n_epoch) + '_' + optimizer + '_mae'
     out_dir = galah_spectra_input+'Autoencoder_dense_test_complex_ccd{:01.0f}_prelu'.format(read_ccd+1)+suffix
     os.system('mkdir '+out_dir)
     os.chdir(out_dir)
@@ -244,15 +342,55 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
     # Visualize network architecture and save the visualization as a file
     plot_model(autoencoder, show_layer_names=True, show_shapes=True, to_file='ann_network_structure_a.pdf')
     plot_model(autoencoder, show_layer_names=True, show_shapes=True, to_file='ann_network_structure_a.png', dpi=300)
-    # plot_model(autoencoder, show_layer_names=True, show_shapes=False, to_file='ann_network_structure_b.pdf')
-    # plot_model(autoencoder, show_layer_names=False, show_shapes=False, to_file='ann_network_structure_c.pdf')
 
     # model file handling
     out_model_file = 'model_weights.h5'
+
     if os.path.isfile(out_model_file):
         autoencoder.load_weights(out_model_file, by_name=True)
+
+        print('Predicting values')
+        processed_data_all = autoencoder.predict(spectral_data_all, verbose=2, batch_size=32768)
+
+        print('Saving ANN median like spectra')
+
+        pkl_out_file = spectra_file_list[read_ccd][:-4] + '_ann_median.pkl'
+        save_pkl_spectra(1. - processed_data_all, galah_spectra_input + pkl_out_file)
+
+        # model that will output decode values
+        print('Predicting encoded values')
+        autoencoder_encoded = Model(inputs=autoencoder.input,
+                                    outputs=autoencoder.get_layer(decoded_layer_name).output)
+        autoencoder_encoded.summary()
+
+        print(' -> Getting predictions from encoded layer')
+        decoded_spectra = autoencoder_encoded.predict(spectral_data, verbose=2, batch_size=32768)
+        decoded_spectra_all = autoencoder_encoded.predict(spectral_data_all, verbose=2, batch_size=32768)
+        print(' -> Saving reduced and encoded spectra')
+        # export as pkl
+        out_file = 'encoded_spectra_ccd{:01.0f}_nf{:.0f}'.format(read_ccd+1, n_l_e)
+        joblib.dump(decoded_spectra_all, out_file+'.pkl')
+        
+        for i_f in range(decoded_spectra.shape[1]):
+            title = 'Zeros: {:.1f}%'.format(100.*np.sum(decoded_spectra[:, i_f] == 0.)/decoded_spectra.shape[0])
+            hist_range = (np.nanpercentile(decoded_spectra[:, i_f], 1), np.nanpercentile(decoded_spectra[:, i_f], 99))
+            plt.hist(decoded_spectra[:, i_f], range=hist_range, bins=75)
+            plt.xlim(hist_range)
+            plt.title(title)
+            plt.savefig('feature_{:02.0f}_train.png'.format(i_f), dpi=200)
+            plt.close()
+        
+        for i_f in range(decoded_spectra_all.shape[1]):
+            title = 'Zeros: {:.1f}%'.format(100.*np.sum(decoded_spectra_all[:, i_f] == 0.)/decoded_spectra_all.shape[0])
+            hist_range = (np.nanpercentile(decoded_spectra_all[:, i_f], 1), np.nanpercentile(decoded_spectra_all[:, i_f], 99))
+            plt.hist(decoded_spectra_all[:, i_f], range=hist_range, bins=75)
+            plt.xlim(hist_range)
+            plt.title(title)
+            plt.savefig('feature_{:02.0f}_all.png'.format(i_f), dpi=200)
+            plt.close()
+
     else:
-        autoencoder.compile(optimizer=optimizer, loss='mse')
+        autoencoder.compile(optimizer=optimizer, loss='mae')
         checkpoint = ModelCheckpoint('ann_model_run_{epoch:03d}-{loss:.4f}-{val_loss:.4f}.h5',
                                      monitor='val_loss', verbose=0, save_best_only=False,
                                      save_weights_only=True, mode='auto', period=1)
@@ -260,19 +398,20 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
                                        epochs=n_epoch,
                                        callbacks=[checkpoint],
                                        shuffle=True,
-                                       batch_size=20000,
-                                       validation_split=0.05,
+                                       batch_size=40000,
+                                       validation_split=0.10,
                                        verbose=2)
 
-        i_best = np.argmin(ann_fit_hist.history['loss'])
-        # i_best = np.argmin(ann_fit_hist.history['val_loss'])
+        i_best = np.argmin(ann_fit_hist.history['val_loss'])
         plt.plot(ann_fit_hist.history['loss'], label='Train')
         plt.plot(ann_fit_hist.history['val_loss'], label='Validation')
         plt.axvline(np.arange(n_epoch)[i_best], ls='--', color='black', alpha=0.5)
         plt.title('Model accuracy')
         plt.xlabel('Epoch')
         plt.ylabel('Loss value')
-        plt.ylim(0, 0.005)
+        plt.ylim(8e-3, 2e-2)
+        plt.xlim(-1, n_epoch)
+        plt.grid(ls='--', alpha=0.2, color='black')
         plt.tight_layout()
         plt.legend()
         plt.savefig('ann_network_loss.png', dpi=250)
@@ -282,159 +421,32 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
         loss_combined = np.vstack((ann_fit_hist.history['loss'], ann_fit_hist.history['val_loss'])).T
         np.savetxt('ann_network_loss.txt', loss_combined)
 
-        # recover weights of the best model and compute predictions
-        h5_weight_files = glob('ann_model_run_{:03.0f}-*-*.h5'.format(i_best+1))
-        if len(h5_weight_files) == 1:
-            print('Restoring epoch {:.0f} with the lowest loss ({:.4f}).'.format(i_best + 1, ann_fit_hist.history['val_loss'][i_best]))
-            autoencoder.load_weights(h5_weight_files[0], by_name=True)
-            # delete all other h5 files that were not used and may occupy a lot of hdd space
-            for h5_file in glob('ann_model_run_*-*-*.h5'):
-                os.system('rm '+h5_file)
+        print('')
+        # recover weights of the selected model and compute predictions
+        for i_best in [10, 25, 50, 100, 150, 200, 250, 300]:
 
-        print('Saving final selected/best model/weights')
-        autoencoder.save_weights(out_model_file)
+            h5_weight_files = glob('ann_model_run_{:03.0f}-*-*.h5'.format(i_best))
 
-    print('Predicting values')
-    processed_data_all = autoencoder.predict(spectral_data_all, verbose=2, batch_size=32768)
+            if len(h5_weight_files) == 1:
+                print('----------------------------------------------------------------')
+                print('Restoring epoch {:.0f} with the loss ({:.4f}).'.format(i_best, ann_fit_hist.history['val_loss'][i_best-1]))
+                autoencoder.load_weights(h5_weight_files[0], by_name=True)
 
-    print('Saving ANN median like spectra')
+                sub_dir = 'epoch_{:03.0f}'.format(i_best)
+                os.system('mkdir ' + sub_dir)
+                os.chdir(sub_dir)
 
-    pkl_out_file = spectra_file_list[read_ccd][:-4] + '_ann_median.pkl'
-    save_pkl_spectra(1. - processed_data_all, galah_spectra_input + pkl_out_file)
-    
-    # denormalize data
-    print(processed_data_all)
-    print(processed_data_all.shape)
+                print('Saving selected model weights')
+                autoencoder.save_weights(out_model_file)
 
-    def plot_selected_spectrum(i_r):
-        i_o = int(np.floor(i_r))
-        s_id = galah_param['sobject_id'][i_o]
-        idx_star = np.where(sme_param['sobject_id'] == s_id)[0]
-        sme_star = sme_param[idx_star]
-        plt.figure(figsize=(20, 5))
-        plt.plot(wvl_values[idx_read], 1. - spectral_data_all[i_o, :], color='black', lw=0.8)
-        plt.plot(wvl_values[idx_read], 1. - processed_data_all[i_o, :], color='blue', lw=0.8)
-        plt.xlim(wvl_values[idx_read][0], wvl_values[idx_read][-1])
-        plt.ylim(0.3, 1.1)
-        if len(sme_star) == 1:
-            plot_title = 'red_f: {:.0f}, sme_f: {:.0f}, teff: {:.0f}, feh: {:.2f}, logg: {:.2f}, vbroad: {:.1f}'.format(np.float(sme_star['red_flag']), np.float(sme_star['flag_sp']), np.float(sme_star['teff']), np.float(sme_star['fe_h']), np.float(sme_star['logg']), np.float(sme_star['vbroad']))
-            plt.title(plot_title)
-        plt.tight_layout()
-        plt.savefig('s_{:06.0f}.png'.format(i_r), dpi=300)
-        plt.close()
-    
-    os.system('mkdir random')
-    os.chdir('random')
-    print('Plotting random spectra')
-    for i_r in np.random.random(250)*n_obj:
-        plot_selected_spectrum(i_r)
-    os.chdir('..')
-    
-    os.system('mkdir tsne_flag')
-    os.chdir('tsne_flag')
-    print('Plotting tsne flaged spectra')
-    for s_id in np.random.choice(galah_tsne_flag['sobject_id'], 250, replace=False):
-        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
-        if len(i_o) != 1:
-            continue
-        else:
-            i_o = i_o[0]
-        plot_selected_spectrum(i_o)
-    os.chdir('..')
+                print('Predicting values')
+                processed_data_all = autoencoder.predict(spectral_data_all, verbose=2, batch_size=32768)
 
-    os.system('mkdir tsne_HaHb')
-    os.chdir('tsne_HaHb')
-    print('Plotting potential HaHb emitters')
-    for s_id in np.random.choice(galah_tsne_flag['sobject_id'][np.logical_or(galah_tsne_flag[tsne_class_string] == 'HaHb emission',galah_tsne_flag[tsne_class_string] == 'HAE_HBE')], 250, replace=False):
-        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
-        if len(i_o) != 1:
-            continue
-        else:
-            i_o = i_o[0]
-        plot_selected_spectrum(i_o)
-    os.chdir('..')
+                plot_sample_spectra()
 
-    
-    os.system('mkdir large_dif')
-    os.chdir('large_dif')
-    print('Plotting strange spectra')
-    spectrum_diff = np.nansum(spectral_data_all - processed_data_all, axis=1)
-    for i_o in np.argsort(spectrum_diff)[::-1][:250]:
-        plot_selected_spectrum(i_o)
-    os.chdir('..')
+                print('')
+                os.chdir('..')
 
-    os.system('mkdir fast_rot')
-    os.chdir('fast_rot')
-    print('Plotting fast rotators')
-    for s_id in np.random.choice(sme_param[sme_param['vbroad'] >= 22]['sobject_id'], 250, replace=False):
-        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
-        if len(i_o) != 1:
-            continue
-        else:
-            i_o = i_o[0]
-        plot_selected_spectrum(i_o)
-    os.chdir('..')
-
-    os.system('mkdir hot_stars')
-    os.chdir('hot_stars')
-    print('Plotting hot stars')
-    for s_id in np.random.choice(sme_param[sme_param['teff'] >= 6800]['sobject_id'], 250, replace=False):
-        i_o = np.where(galah_param['sobject_id'] == s_id)[0]
-        if len(i_o) != 1:
-            continue
-        else:
-            i_o = i_o[0]
-        plot_selected_spectrum(i_o)
-    os.chdir('..')
-
-
-
-    # model that will output decode values
-    print('Predicting encoded values')
-    autoencoder_encoded = Model(inputs=autoencoder.input,
-                                outputs=autoencoder.get_layer(decoded_layer_name).output)
-    autoencoder_encoded.summary()
-
-    plt.plot(autoencoder.predict(np.full((1, n_wvl), 0.), verbose=2)[0])
-    plt.plot(autoencoder.predict(np.full((1, n_wvl), 0.1), verbose=2)[0])
-    plt.plot(autoencoder.predict(np.full((1, n_wvl), -0.1), verbose=2)[0])
-    plt.show()
-    plt.close()
-    # raise SystemExit
-
-    print(autoencoder.get_layer(decoded_layer_name).get_weights())
-    print(autoencoder_encoded.get_layer(decoded_layer_name).get_weights())
-
-    print(' -> Getting predictions from encoded layer')
-    decoded_spectra = autoencoder_encoded.predict(spectral_data, verbose=2, batch_size=32768)
-    decoded_spectra_all = autoencoder_encoded.predict(spectral_data_all, verbose=2, batch_size=32768)
-    print(' -> Saving reduced and encoded spectra')
-    out_file = 'encoded_spectra_ccd{:01.0f}_nf{:.0f}'.format(read_ccd+1, n_l_e)
-    joblib.dump(decoded_spectra_all, out_file+'.pkl')
-    # export as csv
-    csv = open(out_file+'.csv', 'w')
-    for i_l in range(len(galah_param)):
-        line = str(galah_param[i_l]['sobject_id']) + ','
-        line += ','.join([str(f) for f in decoded_spectra_all[i_l, :]])
-        csv.write(line+'\n')
-    csv.close()
-
-    for i_f in range(decoded_spectra.shape[1]):
-        title = 'Zeros: {:.1f}%'.format(100.*np.sum(decoded_spectra[:, i_f] == 0.)/decoded_spectra.shape[0])
-        hist_range = (np.nanpercentile(decoded_spectra[:, i_f], 1), np.nanpercentile(decoded_spectra[:, i_f], 99))
-        plt.hist(decoded_spectra[:, i_f], range=hist_range, bins=75)
-        plt.xlim(hist_range)
-        plt.title(title)
-        plt.savefig('feature_{:02.0f}_train.png'.format(i_f), dpi=200)
-        plt.close()
-    
-    for i_f in range(decoded_spectra_all.shape[1]):
-        title = 'Zeros: {:.1f}%'.format(100.*np.sum(decoded_spectra_all[:, i_f] == 0.)/decoded_spectra_all.shape[0])
-        hist_range = (np.nanpercentile(decoded_spectra_all[:, i_f], 1), np.nanpercentile(decoded_spectra_all[:, i_f], 99))
-        plt.hist(decoded_spectra_all[:, i_f], range=hist_range, bins=75)
-        plt.xlim(hist_range)
-        plt.title(title)
-        plt.savefig('feature_{:02.0f}_all.png'.format(i_f), dpi=200)
-        plt.close()
-    
-    os.chdir('..')
+        # delete all other h5 files that were not used and may occupy a lot of hdd space
+        for h5_file in glob('ann_model_run_*-*-*.h5'):
+            os.system('rm '+h5_file)
