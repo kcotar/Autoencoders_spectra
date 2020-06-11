@@ -402,6 +402,10 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
                                        validation_split=0.10,
                                        verbose=2)
 
+        # save loss and val_loss in textual format
+        loss_combined = np.vstack((ann_fit_hist.history['loss'], ann_fit_hist.history['val_loss'])).T
+        np.savetxt('ann_network_loss.txt', loss_combined)
+
         i_best = np.argmin(ann_fit_hist.history['val_loss'])
         plt.plot(ann_fit_hist.history['loss'], label='Train')
         plt.plot(ann_fit_hist.history['val_loss'], label='Validation')
@@ -409,17 +413,13 @@ for read_ccd in [2, 0]:  #:range(len(spectra_file_list)):
         plt.title('Model accuracy')
         plt.xlabel('Epoch')
         plt.ylabel('Loss value')
-        plt.ylim(8e-3, 2e-2)
+        plt.ylim(np.nanmin(loss_combined)*0.95, np.nanpercentile(loss_combined, 99))
         plt.xlim(-1, n_epoch)
         plt.grid(ls='--', alpha=0.2, color='black')
         plt.tight_layout()
         plt.legend()
         plt.savefig('ann_network_loss.png', dpi=250)
         plt.close()
-
-        # save loss and val_loss in textual format
-        loss_combined = np.vstack((ann_fit_hist.history['loss'], ann_fit_hist.history['val_loss'])).T
-        np.savetxt('ann_network_loss.txt', loss_combined)
 
         print('')
         # recover weights of the selected model and compute predictions
